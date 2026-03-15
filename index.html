@@ -648,6 +648,7 @@ body {
   <div class="header-meta">
     <div class="match-badge" id="matchBadge"></div>
     <div style="font-size:12px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;" id="fileInfo"></div>
+    <button onclick="resetDashboard()" id="loadNewBtn" style="display:none;padding:7px 16px;border:1px solid var(--border);background:var(--surface);border-radius:6px;font-family:'Outfit',sans-serif;font-size:12px;font-weight:500;cursor:pointer;color:var(--text-secondary);transition:all 0.15s;" onmouseover="this.style.borderColor='var(--maroon)';this.style.color='var(--maroon)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-secondary)'">Load Different Logs</button>
   </div>
 </div>
 
@@ -700,10 +701,6 @@ body {
     <div id="diagnosticsContent"></div>
   </div>
 
-  <!-- Reset button -->
-  <div style="text-align:center;margin-top:32px;">
-    <button onclick="resetDashboard()" style="padding:10px 24px;border:1px solid var(--border);background:var(--surface);border-radius:8px;font-family:'Outfit',sans-serif;font-size:13px;cursor:pointer;color:var(--text-secondary);">Load Different Logs</button>
-  </div>
 </div>
 
 <script>
@@ -1214,6 +1211,7 @@ function renderDashboard(logData, eventData) {
 
   document.getElementById('dropContainer').style.display = 'none';
   document.getElementById('dashboard').classList.add('active');
+  document.getElementById('loadNewBtn').style.display = 'inline-block';
 
   // Set match badge
   const fmsEvent = eventData.events.find(e => e.text.includes('FMS Connected'));
@@ -1847,6 +1845,7 @@ function resetDashboard() {
   document.getElementById('dropContainer').style.display = 'flex';
   document.getElementById('dashboard').classList.remove('active');
   document.getElementById('matchBadge').style.display = 'none';
+  document.getElementById('loadNewBtn').style.display = 'none';
   document.querySelector('.drop-zone p').innerHTML = 'Drag & drop your <strong>.dslog</strong> and <strong>.dsevents</strong> files<br>or click to browse';
   if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
   if (modeChartInstance) { modeChartInstance.destroy(); modeChartInstance = null; }
