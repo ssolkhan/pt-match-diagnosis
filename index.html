@@ -1,0 +1,1812 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🔥 PyroTech Match Autopsy</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔥</text></svg>">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap');
+
+:root {
+  --bg: #FAFAF8;
+  --surface: #FFFFFF;
+  --surface-alt: #F5F3EF;
+  --border: #E8E4DC;
+  --border-strong: #D1CBC0;
+  --text: #1A1714;
+  --text-secondary: #6B6560;
+  --text-muted: #9B9590;
+  --maroon: #8B1A1A;
+  --maroon-light: #B22222;
+  --maroon-bg: #FDF2F2;
+  --fire: #D4453A;
+  --fire-glow: #FF6B35;
+  --green: #1B7D3A;
+  --green-bg: #EEFBF0;
+  --green-border: #B4E5BE;
+  --yellow: #B8860B;
+  --yellow-bg: #FFF9E6;
+  --yellow-border: #F0D878;
+  --red: #C41E1E;
+  --red-bg: #FFF0F0;
+  --red-border: #F5A3A3;
+  --blue: #1E5FC4;
+  --blue-bg: #EEF4FF;
+  --blue-border: #A3C4F5;
+  --auto-color: #3B82F6;
+  --teleop-color: #22C55E;
+  --disabled-color: #9CA3AF;
+  --radius: 10px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+  --shadow-lg: 0 8px 30px rgba(0,0,0,0.12);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'Outfit', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+/* ========== HEADER ========== */
+.header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 32px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-logo .fire-icon {
+  font-size: 28px;
+  filter: drop-shadow(0 0 6px rgba(212,69,58,0.4));
+}
+
+.header-logo h1 {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--maroon);
+  letter-spacing: -0.5px;
+}
+
+.header-logo h1 span {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 15px;
+  margin-left: 6px;
+}
+
+.header-meta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.match-badge {
+  background: var(--maroon-bg);
+  color: var(--maroon);
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  display: none;
+}
+
+/* ========== DROP ZONE ========== */
+.drop-zone-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: calc(100vh - 64px);
+  padding: 40px;
+}
+
+.drop-zone {
+  width: 100%;
+  max-width: 640px;
+  border: 2px dashed var(--border-strong);
+  border-radius: 16px;
+  padding: 60px 40px;
+  text-align: center;
+  background: var(--surface);
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.drop-zone:hover, .drop-zone.drag-over {
+  border-color: var(--maroon);
+  background: var(--maroon-bg);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.drop-zone .icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.drop-zone h2 {
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.drop-zone p {
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.drop-zone .hint {
+  margin-top: 20px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.drop-zone input[type="file"] {
+  display: none;
+}
+
+/* ========== MAIN LAYOUT ========== */
+.main-content {
+  display: none;
+  padding: 0 24px 40px;
+}
+
+.main-content.active {
+  display: block;
+}
+
+/* ========== TABS ========== */
+.tabs {
+  display: flex;
+  gap: 2px;
+  background: var(--surface-alt);
+  border-radius: var(--radius);
+  padding: 4px;
+  margin: 20px 0;
+  border: 1px solid var(--border);
+  width: fit-content;
+}
+
+.tab-btn {
+  padding: 10px 22px;
+  border: none;
+  background: transparent;
+  font-family: 'Outfit', sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.tab-btn:hover {
+  color: var(--text);
+  background: rgba(255,255,255,0.6);
+}
+
+.tab-btn.active {
+  background: var(--surface);
+  color: var(--maroon);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+.tab-panel {
+  display: none;
+}
+
+.tab-panel.active {
+  display: block;
+  animation: fadeIn 0.25s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ========== MATCH SUMMARY TAB ========== */
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  transition: transform 0.15s;
+}
+
+.stat-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.stat-card .label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.stat-card .value {
+  font-size: 28px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: -1px;
+}
+
+.stat-card .sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.stat-card.danger .value { color: var(--red); }
+.stat-card.warning .value { color: var(--yellow); }
+.stat-card.good .value { color: var(--green); }
+.stat-card.info .value { color: var(--blue); }
+
+/* Health Score */
+.health-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  margin-bottom: 24px;
+}
+
+.health-bar-container {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.health-score-num {
+  font-size: 48px;
+  font-weight: 800;
+  font-family: 'JetBrains Mono', monospace;
+  min-width: 80px;
+}
+
+.health-bar-track {
+  flex: 1;
+  height: 16px;
+  background: var(--surface-alt);
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.health-bar-fill {
+  height: 100%;
+  border-radius: 8px;
+  transition: width 1s ease;
+}
+
+.health-label {
+  font-size: 14px;
+  font-weight: 600;
+  min-width: 100px;
+  text-align: right;
+}
+
+/* Mode timeline mini bar */
+.mode-bar-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  margin-bottom: 24px;
+}
+
+.mode-bar-section h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+
+.mode-bar {
+  height: 32px;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  border: 1px solid var(--border);
+}
+
+.mode-bar .segment {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: white;
+  font-family: 'JetBrains Mono', monospace;
+  min-width: 1px;
+}
+
+.mode-bar .segment.auto { background: var(--auto-color); }
+.mode-bar .segment.teleop { background: var(--teleop-color); }
+.mode-bar .segment.disabled { background: var(--disabled-color); }
+.mode-bar .segment.disconnected { background: #E5E7EB; color: var(--text-muted); }
+
+.mode-legend {
+  display: flex;
+  gap: 20px;
+  margin-top: 10px;
+}
+
+.mode-legend span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.mode-legend .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+/* ========== UNIFIED TIMELINE TAB ========== */
+.chart-container {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.chart-container canvas {
+  width: 100% !important;
+}
+
+.chart-controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.chart-toggle {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px;
+  font-family: 'Outfit', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.chart-toggle.active {
+  background: var(--maroon);
+  color: white;
+  border-color: var(--maroon);
+}
+
+.chart-toggle:hover:not(.active) {
+  border-color: var(--maroon);
+  color: var(--maroon);
+}
+
+/* ========== ERRORS & WARNINGS TAB ========== */
+.error-filters {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.filter-chip {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 20px;
+  font-family: 'Outfit', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.filter-chip.active { border-color: var(--maroon); background: var(--maroon-bg); color: var(--maroon); }
+.filter-chip .count {
+  background: var(--surface-alt);
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.filter-chip.active .count { background: rgba(139,26,26,0.15); }
+
+.error-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.error-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  cursor: pointer;
+  transition: all 0.15s;
+  border-left: 4px solid transparent;
+}
+
+.error-item:hover { box-shadow: var(--shadow-sm); }
+.error-item.critical { border-left-color: var(--red); }
+.error-item.warning { border-left-color: var(--yellow); }
+.error-item.info { border-left-color: var(--blue); }
+
+.error-item .error-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.error-item .severity-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.severity-badge.critical { background: var(--red-bg); color: var(--red); }
+.severity-badge.warning { background: var(--yellow-bg); color: var(--yellow); }
+.severity-badge.info { background: var(--blue-bg); color: var(--blue); }
+
+.error-item .error-title {
+  font-weight: 600;
+  font-size: 14px;
+  flex: 1;
+}
+
+.error-item .error-time {
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-muted);
+}
+
+.error-item .error-count {
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-muted);
+  background: var(--surface-alt);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.error-item .error-detail {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  display: none;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-family: 'JetBrains Mono', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.error-item.expanded .error-detail { display: block; }
+
+/* ========== AI DIAGNOSTICS TAB ========== */
+.diag-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 24px 0 12px;
+}
+
+.diag-section-title:first-child { margin-top: 0; }
+
+.action-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.action-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  border-left: 5px solid transparent;
+}
+
+.action-card.fix-now {
+  border-left-color: var(--red);
+  background: var(--red-bg);
+  border-color: var(--red-border);
+}
+
+.action-card.investigate {
+  border-left-color: var(--yellow);
+  background: var(--yellow-bg);
+  border-color: var(--yellow-border);
+}
+
+.action-card.monitor {
+  border-left-color: var(--green);
+  background: var(--green-bg);
+  border-color: var(--green-border);
+}
+
+.action-card .card-priority {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 6px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.action-card.fix-now .card-priority { color: var(--red); }
+.action-card.investigate .card-priority { color: var(--yellow); }
+.action-card.monitor .card-priority { color: var(--green); }
+
+.action-card .card-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.action-card .card-body {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.action-card .card-evidence {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(0,0,0,0.08);
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.no-issues {
+  text-align: center;
+  padding: 40px;
+  color: var(--text-muted);
+  font-size: 15px;
+}
+
+/* ========== RESPONSIVE ========== */
+@media (max-width: 768px) {
+  .header { padding: 12px 16px; }
+  .main-content { padding: 0 12px 24px; }
+  .tabs { overflow-x: auto; width: 100%; }
+  .summary-grid { grid-template-columns: repeat(2, 1fr); }
+  .stat-card .value { font-size: 22px; }
+}
+
+/* ========== SCROLLBAR ========== */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--surface-alt); }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="header-logo">
+    <span class="fire-icon">🔥</span>
+    <h1>PyroTech <span>Match Autopsy</span></h1>
+  </div>
+  <div class="header-meta">
+    <div class="match-badge" id="matchBadge"></div>
+    <div style="font-size:12px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;" id="fileInfo"></div>
+  </div>
+</div>
+
+<!-- DROP ZONE -->
+<div class="drop-zone-container" id="dropContainer">
+  <div class="drop-zone" id="dropZone">
+    <div class="icon">📂</div>
+    <h2>Drop Robot Logs Here</h2>
+    <p>Drag & drop your <strong>.dslog</strong> and <strong>.dsevents</strong> files<br>or click to browse</p>
+    <div class="hint">.dslog (telemetry) + .dsevents (events) — both v3 and v4 supported</div>
+    <input type="file" id="fileInput" multiple accept=".dslog,.dsevents">
+  </div>
+</div>
+
+<!-- MAIN DASHBOARD -->
+<div class="main-content" id="dashboard">
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="summary">🔥 Match Summary</button>
+    <button class="tab-btn" data-tab="timeline">📈 Unified Timeline</button>
+    <button class="tab-btn" data-tab="errors">⚠️ Errors & Warnings</button>
+    <button class="tab-btn" data-tab="diagnostics">🩺 AI Diagnostics</button>
+  </div>
+
+  <!-- TAB: Match Summary -->
+  <div class="tab-panel active" id="tab-summary">
+    <div class="health-section" id="healthSection"></div>
+    <div class="mode-bar-section" id="modeBarSection"></div>
+    <div class="summary-grid" id="summaryGrid"></div>
+  </div>
+
+  <!-- TAB: Unified Timeline -->
+  <div class="tab-panel" id="tab-timeline">
+    <div class="chart-controls" id="chartControls"></div>
+    <div class="chart-container">
+      <canvas id="timelineChart" height="350"></canvas>
+    </div>
+    <div class="chart-container" style="margin-top:8px;">
+      <canvas id="modeChart" height="60"></canvas>
+    </div>
+  </div>
+
+  <!-- TAB: Errors & Warnings -->
+  <div class="tab-panel" id="tab-errors">
+    <div class="error-filters" id="errorFilters"></div>
+    <div class="error-list" id="errorList"></div>
+  </div>
+
+  <!-- TAB: AI Diagnostics -->
+  <div class="tab-panel" id="tab-diagnostics">
+    <div id="diagnosticsContent"></div>
+  </div>
+
+  <!-- Reset button -->
+  <div style="text-align:center;margin-top:32px;">
+    <button onclick="resetDashboard()" style="padding:10px 24px;border:1px solid var(--border);background:var(--surface);border-radius:8px;font-family:'Outfit',sans-serif;font-size:13px;cursor:pointer;color:var(--text-secondary);">Load Different Logs</button>
+  </div>
+</div>
+
+<script>
+// ========================================================================
+// PYROTECH MATCH AUTOPSY — BINARY PARSERS & DIAGNOSTIC ENGINE
+// ========================================================================
+
+const MAX_INT64 = BigInt("9223372036854775807");
+const LV_EPOCH = new Date(Date.UTC(1904, 0, 1));
+
+// ==================== DSLOG PARSER ====================
+function parseDSLog(buffer) {
+  const view = new DataView(buffer);
+  const version = view.getInt32(0);
+  
+  if (version !== 3 && version !== 4) {
+    throw new Error(`Unsupported dslog version: ${version}. Expected 3 or 4.`);
+  }
+
+  // Header: 4 bytes version + 8 bytes seconds + 8 bytes fractional
+  const secHi = view.getInt32(4);
+  const secLo = view.getUint32(8);
+  const seconds = secHi * 4294967296 + secLo;
+  const fracHi = view.getUint32(12);
+  const fracLo = view.getUint32(16);
+
+  const startTime = new Date(LV_EPOCH.getTime() + seconds * 1000);
+  
+  const headerSize = 20;
+  const recordSize = version === 4 ? 47 : 35;
+  const dataLen = buffer.byteLength - headerSize;
+  const numRecords = Math.floor(dataLen / recordSize);
+  
+  const records = [];
+  for (let i = 0; i < numRecords; i++) {
+    const offset = headerSize + i * recordSize;
+    const tripTime = view.getUint8(offset) / 2.0;
+    const packetLoss = 0.04 * view.getUint8(offset + 1);
+    const voltageRaw = view.getUint16(offset + 2);
+    const voltage = voltageRaw === 0xFFFF ? null : voltageRaw / 256.0;
+    const rioCpu = 0.01 * view.getUint8(offset + 4) / 2.0;
+    const statusByte = view.getUint8(offset + 5);
+    const canUsage = 0.01 * view.getUint8(offset + 6) / 2.0;
+    const wifiDb = view.getUint8(offset + 7) / 2.0;
+    const bandwidth = view.getUint16(offset + 8) / 256.0;
+
+    // Status bits (inverted)
+    const robotDisabled = !(statusByte & 0x01);
+    const robotAuto    = !(statusByte & 0x02);
+    const robotTele    = !(statusByte & 0x04);
+    const dsDisabled   = !(statusByte & 0x08);
+    const dsAuto       = !(statusByte & 0x10);
+    const dsTele       = !(statusByte & 0x20);
+    const watchdog     = !(statusByte & 0x40);
+    const brownout     = !(statusByte & 0x80);
+
+    let mode = 'disconnected';
+    if (robotAuto) mode = 'auto';
+    else if (robotTele) mode = 'teleop';
+    else if (robotDisabled) mode = 'disabled';
+
+    records.push({
+      time_s: i * 0.020,
+      timestamp: new Date(startTime.getTime() + i * 20),
+      tripTime, packetLoss, voltage, rioCpu, canUsage, wifiDb, bandwidth,
+      robotDisabled, robotAuto, robotTele, dsDisabled, dsAuto, dsTele,
+      watchdog, brownout, mode
+    });
+  }
+
+  return { version, startTime, records };
+}
+
+// ==================== DSEVENTS PARSER ====================
+function parseDSEvents(buffer) {
+  const view = new DataView(buffer);
+  const version = view.getInt32(0);
+  
+  const events = [];
+  let pos = 4;
+
+  // Read start timestamp
+  const secHi = view.getInt32(pos); pos += 4;
+  const secLo = view.getUint32(pos); pos += 4;
+  const startSeconds = secHi * 4294967296 + secLo;
+  const fracHi = view.getUint32(pos); pos += 4;
+  const fracLo = view.getUint32(pos); pos += 4;
+  const startTime = new Date(LV_EPOCH.getTime() + startSeconds * 1000);
+
+  while (pos < buffer.byteLength - 16) {
+    // Each event: 8 bytes timestamp + 8 bytes secondary + variable text
+    if (pos + 16 > buffer.byteLength) break;
+    
+    const evSecHi = view.getInt32(pos); pos += 4;
+    const evSecLo = view.getUint32(pos); pos += 4;
+    const evSeconds = evSecHi * 4294967296 + evSecLo;
+    const evTime = new Date(LV_EPOCH.getTime() + evSeconds * 1000);
+    pos += 8; // skip secondary timestamp
+
+    // Read text until next record marker (next valid timestamp)
+    let textBytes = [];
+    while (pos < buffer.byteLength) {
+      const b = view.getUint8(pos);
+      // Check if we hit a record boundary: 4 null bytes followed by timestamp-like data
+      if (b === 0 && pos + 4 < buffer.byteLength) {
+        let nullCount = 0;
+        for (let j = 0; j < 4 && pos + j < buffer.byteLength; j++) {
+          if (view.getUint8(pos + j) === 0) nullCount++;
+          else break;
+        }
+        if (nullCount >= 3) {
+          pos += nullCount;
+          break;
+        }
+      }
+      textBytes.push(b);
+      pos++;
+    }
+
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(textBytes)).trim();
+    if (text.length > 0) {
+      const timeSinceStart = (evSeconds - startSeconds);
+      events.push({
+        timestamp: evTime,
+        time_s: timeSinceStart,
+        text: text,
+        ...classifyEvent(text)
+      });
+    }
+  }
+
+  return { version, startTime, events };
+}
+
+// ==================== EVENT CLASSIFIER ====================
+function classifyEvent(text) {
+  const lower = text.toLowerCase();
+  
+  // Critical errors
+  if (lower.includes('timed out') || lower.includes('timeout'))
+    return { severity: 'critical', category: 'CAN', title: extractTitle(text, 'CAN Timeout') };
+  if (lower.includes('brownout'))
+    return { severity: 'critical', category: 'Power', title: 'Brownout Detected' };
+  if (lower.includes('error') && lower.includes('can'))
+    return { severity: 'critical', category: 'CAN', title: extractTitle(text, 'CAN Error') };
+  if (lower.includes('unhandled exception') || lower.includes('error at') || lower.includes('crash'))
+    return { severity: 'critical', category: 'Code', title: 'Code Exception' };
+  if (lower.includes('watchdog'))
+    return { severity: 'critical', category: 'System', title: 'Watchdog Timeout' };
+  if (lower.includes('loop overrun') || lower.includes('loop time'))
+    return { severity: 'critical', category: 'System', title: 'Loop Overrun' };
+    
+  // Warnings
+  if (lower.includes('lost communication'))
+    return { severity: 'warning', category: 'Comms', title: 'Communication Lost' };
+  if (lower.includes('ping') && lower.includes('bad'))
+    return { severity: 'warning', category: 'Comms', title: 'Ping Status Change' };
+  if (lower.includes('not a spark max') || lower.includes('functionalities may not work'))
+    return { severity: 'warning', category: 'CAN', title: 'CAN Device Mismatch' };
+  if (lower.includes('update') && (lower.includes('firmware') || lower.includes('radio')))
+    return { severity: 'warning', category: 'System', title: 'Firmware Update Needed' };
+  if (lower.includes('low') && lower.includes('disk'))
+    return { severity: 'warning', category: 'System', title: 'Low Disk Space' };
+  if (lower.includes('reset safe parameters'))
+    return { severity: 'warning', category: 'CAN', title: 'CAN Reset Parameters Timeout' };
+  if (lower.includes('navx') && lower.includes('opening'))
+    return { severity: 'warning', category: 'Sensor', title: 'NavX Connection Attempt' };
+    
+  // Info
+  if (lower.includes('fms connected'))
+    return { severity: 'info', category: 'FMS', title: 'FMS Connected' };
+  if (lower.includes('code start'))
+    return { severity: 'info', category: 'Code', title: 'Robot Code Started' };
+  if (lower.includes('joystick'))
+    return { severity: 'info', category: 'System', title: 'Joystick Configuration' };
+  if (lower.includes('signal logger'))
+    return { severity: 'info', category: 'System', title: 'Signal Logger Status' };
+  if (lower.includes('info roborio') || lower.includes('info robori'))
+    return { severity: 'info', category: 'System', title: 'System Status' };
+  if (lower.includes('driver station'))
+    return { severity: 'info', category: 'System', title: 'Driver Station Info' };
+  if (lower.includes('init:') || lower.includes('init '))
+    return { severity: 'info', category: 'Code', title: 'Subsystem Init' };
+    
+  return { severity: 'info', category: 'Other', title: text.substring(0, 60) };
+}
+
+function extractTitle(text, fallback) {
+  // Try to extract meaningful title from tag-based messages
+  const detailMatch = text.match(/<details>\s*(.{10,80}?)(?:\s*<|$)/);
+  if (detailMatch) return detailMatch[1].trim().substring(0, 80);
+  const msgMatch = text.match(/<message>\s*(.{10,80}?)(?:\s*<|$)/);
+  if (msgMatch) return msgMatch[1].trim().substring(0, 80);
+  return fallback;
+}
+
+// ==================== DIAGNOSTIC RULE ENGINE ====================
+function runDiagnostics(logData, eventData) {
+  const diagnostics = { fixNow: [], investigate: [], monitor: [] };
+  const records = logData.records;
+  const events = eventData.events;
+
+  // Compute aggregates
+  const matchRecords = records.filter(r => r.mode === 'auto' || r.mode === 'teleop');
+  const autoRecords = records.filter(r => r.mode === 'auto');
+  const teleopRecords = records.filter(r => r.mode === 'teleop');
+  const validVoltages = matchRecords.filter(r => r.voltage !== null);
+  const minVoltage = validVoltages.length ? Math.min(...validVoltages.map(r => r.voltage)) : 99;
+  const avgVoltage = validVoltages.length ? validVoltages.reduce((s, r) => s + r.voltage, 0) / validVoltages.length : 0;
+  const maxPacketLoss = matchRecords.length ? Math.max(...matchRecords.map(r => r.packetLoss)) : 0;
+  const avgPacketLoss = matchRecords.length ? matchRecords.reduce((s, r) => s + r.packetLoss, 0) / matchRecords.length : 0;
+  const maxCan = matchRecords.length ? Math.max(...matchRecords.map(r => r.canUsage)) : 0;
+  const totalDuration = records.length * 0.02;
+  const autoDuration = autoRecords.length * 0.02;
+  const teleopDuration = teleopRecords.length * 0.02;
+
+  // Find comms stability
+  let modeFlips = 0;
+  for (let i = 1; i < records.length; i++) {
+    if (records[i].mode !== records[i-1].mode) modeFlips++;
+  }
+  const commsFlickerRate = modeFlips / (totalDuration || 1);
+
+  // Count sub-threshold voltage periods
+  let below10Count = 0, below8Count = 0;
+  for (const r of matchRecords) {
+    if (r.voltage !== null && r.voltage < 10) below10Count++;
+    if (r.voltage !== null && r.voltage < 8) below8Count++;
+  }
+  const below10Duration = below10Count * 0.02;
+  const below8Duration = below8Count * 0.02;
+
+  // Voltage drop events (sustained drops > 2V in 200ms)
+  const voltageCrashes = [];
+  for (let i = 10; i < matchRecords.length; i++) {
+    const curr = matchRecords[i].voltage;
+    const prev = matchRecords[i-10].voltage;
+    if (curr !== null && prev !== null && prev - curr > 2.0) {
+      voltageCrashes.push({ time: matchRecords[i].time_s, from: prev, to: curr });
+    }
+  }
+
+  // Brownout detection
+  const brownouts = records.filter(r => r.brownout);
+
+  // Find time to first robot connection
+  const firstConnected = records.find(r => r.mode !== 'disconnected' && r.voltage !== null);
+  const connDelay = firstConnected ? firstConnected.time_s : totalDuration;
+
+  // Extract specific events
+  const canTimeouts = events.filter(e => e.category === 'CAN' && e.title.includes('Timeout'));
+  const canMismatches = events.filter(e => e.title.includes('Mismatch') || e.text.toLowerCase().includes('not a spark max'));
+  const commsLost = events.filter(e => e.title.includes('Communication Lost'));
+  const firmwareWarnings = events.filter(e => e.title.includes('Firmware'));
+  const diskWarnings = events.filter(e => e.title.includes('Disk'));
+  const codeExceptions = events.filter(e => e.severity === 'critical' && e.category === 'Code');
+  const watchdogEvents = records.filter(r => r.watchdog);
+  const navxEvents = events.filter(e => e.category === 'Sensor' && e.title.includes('NavX'));
+  const loopOverruns = events.filter(e => e.title.includes('Loop Overrun'));
+  const codeStarts = events.filter(e => e.title === 'Robot Code Started');
+
+  // ---- RULE 1: Severe voltage drops ----
+  if (minVoltage < 8.0) {
+    diagnostics.fixNow.push({
+      title: '🔋 Critical Voltage Collapse',
+      body: `Battery voltage dropped to ${minVoltage.toFixed(1)}V during the match. Below 8V the roboRIO will brown out and reboot, causing total loss of control. This is extremely dangerous.`,
+      evidence: `Min voltage: ${minVoltage.toFixed(2)}V | Crashes below 10V: ${voltageCrashes.length} events | Below-10V duration: ${below10Duration.toFixed(1)}s`,
+      action: 'SWAP BATTERY immediately. Check for stalled motors, shorted wiring, or mechanism jams drawing excessive current.'
+    });
+  } else if (minVoltage < 10.0) {
+    diagnostics.fixNow.push({
+      title: '🔋 Severe Voltage Drops',
+      body: `Battery voltage dropped to ${minVoltage.toFixed(1)}V during the match. Voltages below 10V cause erratic motor behavior, CAN communication failures, and brownout risk.`,
+      evidence: `Min voltage: ${minVoltage.toFixed(2)}V | Avg: ${avgVoltage.toFixed(2)}V | Crashes: ${voltageCrashes.length} | Below-10V: ${below10Duration.toFixed(1)}s`,
+      action: 'SWAP BATTERY. Investigate current draw — check for stalled motors, binding mechanisms, or short circuits in the wiring harness.'
+    });
+  } else if (minVoltage < 11.0) {
+    diagnostics.investigate.push({
+      title: '🔋 Moderate Voltage Sag',
+      body: `Battery dipped to ${minVoltage.toFixed(1)}V. While not immediately critical, this indicates the battery is working hard. Continued drops will eventually trigger brownouts.`,
+      evidence: `Min: ${minVoltage.toFixed(2)}V | Avg: ${avgVoltage.toFixed(2)}V`,
+      action: 'Consider swapping to a fresh battery. Monitor for worsening trend across matches.'
+    });
+  }
+
+  // ---- RULE 2: Brownouts ----
+  if (brownouts.length > 0) {
+    diagnostics.fixNow.push({
+      title: '⚡ Brownout Events Detected',
+      body: `The roboRIO flagged ${brownouts.length} brownout condition(s). During brownout, the roboRIO disables motor outputs to protect itself. Your robot went limp during these moments.`,
+      evidence: `Brownout records: ${brownouts.length} (${(brownouts.length * 0.02).toFixed(1)}s total)`,
+      action: 'Swap battery. Check PDP/PDH breaker connections. Look for mechanisms that stall under load.'
+    });
+  }
+
+  // ---- RULE 3: CAN device mismatch ----
+  if (canMismatches.length > 0) {
+    const detail = canMismatches[0].text;
+    const canIdMatch = detail.match(/CAN ID (\d+)/);
+    const canId = canIdMatch ? canIdMatch[1] : '?';
+    diagnostics.fixNow.push({
+      title: `🔧 CAN Device Mismatch (ID ${canId})`,
+      body: `Code expects a SPARK MAX on CAN ID ${canId}, but a different device is there. This means motor control for that mechanism may be unreliable or non-functional.`,
+      evidence: `"${canMismatches[0].text.substring(0, 120)}..."`,
+      action: `Verify CAN ID ${canId} — is it a SPARK MAX, SPARK Flex, or something else? Update the code constructor to match the actual hardware, or fix the CAN ID assignment in the hardware client (REV, CTRE).`
+    });
+  }
+
+  // ---- RULE 4: CAN timeouts ----
+  if (canTimeouts.length > 0) {
+    diagnostics.fixNow.push({
+      title: '🚨 CAN Bus Timeouts',
+      body: `${canTimeouts.length} CAN device(s) timed out during initialization or operation. Devices on the CAN bus are not responding, which means motors or sensors connected to them will not work.`,
+      evidence: canTimeouts.slice(0, 3).map(e => e.text.substring(0, 100)).join('\n'),
+      action: 'Check CAN wiring chain: look for loose/broken connections, verify termination resistor, check device firmware versions. Power cycle all CAN devices.'
+    });
+  }
+
+  // ---- RULE 5: High CAN utilization ----
+  if (maxCan > 0.70) {
+    diagnostics.investigate.push({
+      title: '📊 High CAN Bus Utilization',
+      body: `CAN bus utilization peaked at ${(maxCan * 100).toFixed(0)}%. Above 70%, the bus becomes congested and devices may miss commands or report stale data. This can cause jerky motor behavior.`,
+      evidence: `Peak CAN usage: ${(maxCan * 100).toFixed(1)}%`,
+      action: 'Reduce CAN bus traffic: lower status frame rates for non-critical devices, reduce unnecessary sensor polling, check for devices sending at default (high) rates.'
+    });
+  }
+
+  // ---- RULE 6: Comms instability / flicker ----
+  if (commsFlickerRate > 2.0) {
+    diagnostics.fixNow.push({
+      title: '📡 Severe Communications Instability',
+      body: `Robot connection was flickering at ${commsFlickerRate.toFixed(1)} mode changes/second. The DS and robot are rapidly connecting/disconnecting, which causes intermittent loss of control.`,
+      evidence: `Mode transitions: ${modeFlips} over ${totalDuration.toFixed(0)}s | Rate: ${commsFlickerRate.toFixed(1)}/s`,
+      action: 'Check radio wiring and barrel jack connection. Inspect Ethernet cables to radio and roboRIO. Verify radio is properly powered (12V, not 5V). Check for RF interference from metal structures.'
+    });
+  } else if (commsFlickerRate > 0.5) {
+    diagnostics.investigate.push({
+      title: '📡 Communications Flickering',
+      body: `Connection was unstable with ${commsFlickerRate.toFixed(1)} mode changes/second. Some packet loss is normal at events, but this level can cause delayed or missed commands.`,
+      evidence: `Mode transitions: ${modeFlips} | Avg packet loss: ${avgPacketLoss.toFixed(2)}% | Max: ${maxPacketLoss.toFixed(1)}%`,
+      action: 'Check all network connections. Ensure radio firmware is up to date. At events, this may be field-side interference — note which field position.'
+    });
+  }
+
+  // ---- RULE 7: Packet loss ----
+  if (maxPacketLoss > 5.0 && commsFlickerRate <= 2.0) {
+    diagnostics.investigate.push({
+      title: '📦 Elevated Packet Loss',
+      body: `Packet loss peaked at ${maxPacketLoss.toFixed(1)}% during the match. Above 5% you'll notice delayed joystick inputs and choppy robot response.`,
+      evidence: `Max loss: ${maxPacketLoss.toFixed(1)}% | Avg: ${avgPacketLoss.toFixed(2)}%`,
+      action: 'Check radio signal strength. At events, try to note if loss correlates with specific field positions. Ensure radio antennas are unobstructed.'
+    });
+  }
+
+  // ---- RULE 8: Slow connection to robot ----
+  if (connDelay > 30) {
+    diagnostics.investigate.push({
+      title: '⏱️ Slow Robot Connection',
+      body: `It took ${connDelay.toFixed(0)} seconds after DS logging started to establish robot connection. Long connection times eat into your match time and can indicate network or boot issues.`,
+      evidence: `Connection delay: ${connDelay.toFixed(1)}s`,
+      action: 'Check roboRIO boot time (is the SD card slow?). Verify radio and network configuration. Ensure robot code starts quickly without blocking in constructor.'
+    });
+  }
+
+  // ---- RULE 9: Short auto ----
+  if (autoDuration > 0 && autoDuration < 10) {
+    const hasCodeCrash = codeExceptions.length > 0;
+    diagnostics.investigate.push({
+      title: '🤖 Abnormally Short Autonomous',
+      body: `Auto mode only ran for ${autoDuration.toFixed(1)}s out of the expected 15s.${hasCodeCrash ? ' Code exceptions were also detected, suggesting the auto routine may have crashed.' : ' This could indicate a comm drop, an early mode switch, or an auto routine that ended prematurely.'}`,
+      evidence: `Auto duration: ${autoDuration.toFixed(1)}s | Code exceptions: ${codeExceptions.length}`,
+      action: hasCodeCrash
+        ? 'Review auto routine code for null pointer exceptions, uninitialized subsystems, or command scheduling errors. Check the stack trace in the error log.'
+        : 'Verify auto routine is configured correctly. Check command scheduling and timeout values.'
+    });
+  }
+
+  // ---- RULE 10: Firmware update warnings ----
+  if (firmwareWarnings.length > 0) {
+    diagnostics.investigate.push({
+      title: '🔄 Firmware Update Required',
+      body: 'The Driver Station flagged outdated firmware. Running old firmware can cause compatibility issues with the current WPILib and device APIs.',
+      evidence: firmwareWarnings.map(e => e.text.substring(0, 120)).join('\n'),
+      action: 'Update radio firmware using the FRC Radio Configuration Tool. Check CTRE/REV device firmware via Phoenix Tuner X / REV Hardware Client.'
+    });
+  }
+
+  // ---- RULE 11: Disk space warning ----
+  if (diskWarnings.length > 0) {
+    diagnostics.investigate.push({
+      title: '💾 Low Disk Space on roboRIO',
+      body: 'The roboRIO is running low on storage. If it runs out completely, the robot code may fail to start or logging will stop.',
+      evidence: diskWarnings.map(e => e.text.substring(0, 120)).join('\n'),
+      action: 'Use Tuner X or SSH to delete old log files from the roboRIO. Clear old hoot logs and data logs.'
+    });
+  }
+
+  // ---- RULE 12: Code exceptions ----
+  if (codeExceptions.length > 0) {
+    diagnostics.fixNow.push({
+      title: '💥 Robot Code Exceptions',
+      body: `${codeExceptions.length} code exception(s) detected. Unhandled exceptions can crash subsystems or the entire robot program.`,
+      evidence: codeExceptions.slice(0, 2).map(e => e.text.substring(0, 150)).join('\n'),
+      action: 'Review the stack trace to identify the failing line of code. Check for null references, array out of bounds, or hardware initialization failures.'
+    });
+  }
+
+  // ---- RULE 13: Watchdog violations ----
+  if (watchdogEvents.length > 10) {
+    diagnostics.investigate.push({
+      title: '🐕 Watchdog Violations',
+      body: `${watchdogEvents.length} watchdog violation(s) detected. The robot code loop is taking too long (>20ms), causing the watchdog to trigger and briefly disable outputs.`,
+      evidence: `Watchdog records: ${watchdogEvents.length} (${(watchdogEvents.length * 0.02).toFixed(1)}s)`,
+      action: 'Profile your robot code loop. Move slow operations (vision processing, complex path planning) to separate threads. Reduce unnecessary object allocation in periodic functions.'
+    });
+  }
+
+  // ---- RULE 14: Voltage crash correlated with CAN errors ----
+  if (voltageCrashes.length > 0 && canTimeouts.length > 0) {
+    // Check if any voltage crash is within 2s of a CAN timeout
+    let correlated = false;
+    for (const crash of voltageCrashes) {
+      for (const timeout of canTimeouts) {
+        if (Math.abs(crash.time - timeout.time_s) < 2.0) {
+          correlated = true;
+          break;
+        }
+      }
+      if (correlated) break;
+    }
+    if (correlated) {
+      diagnostics.fixNow.push({
+        title: '🔗 Voltage Crash + CAN Failure Correlation',
+        body: 'Voltage drops and CAN timeouts are happening at the same time. This strongly suggests a mechanism is jamming or stalling, drawing enormous current that starves the CAN bus of power.',
+        evidence: `Voltage crashes: ${voltageCrashes.length} | CAN timeouts: ${canTimeouts.length} | Events overlap within 2s`,
+        action: 'Identify which mechanism was active during the crash. Check for physical binding, jammed game pieces, or motors fighting each other. Implement current limiting in code.'
+      });
+    }
+  }
+
+  // ---- RULE 15: NavX reconnection attempts ----
+  if (navxEvents.length > 3) {
+    diagnostics.investigate.push({
+      title: '🧭 NavX Sensor Reconnecting Repeatedly',
+      body: `NavX attempted ${navxEvents.length} USB connection(s). Repeated reconnection attempts indicate a loose USB cable or NavX power issue.`,
+      evidence: `NavX connection attempts: ${navxEvents.length}`,
+      action: 'Secure the NavX USB cable. Check for intermittent connections. Consider switching to SPI or I2C if USB is unreliable due to vibration.'
+    });
+  }
+
+  // ---- RULE 16: Multiple code starts ----
+  if (codeStarts.length > 1) {
+    diagnostics.investigate.push({
+      title: '🔁 Robot Code Restarted During Match',
+      body: `Robot code started ${codeStarts.length} time(s), indicating the program crashed and restarted. Each restart means several seconds of no robot control.`,
+      evidence: `Code start events: ${codeStarts.length}`,
+      action: 'Check for unhandled exceptions that crash the main robot program. Review constructor and initialization code for hardware conflicts.'
+    });
+  }
+
+  // ---- RULE 17: Average voltage too low overall ----
+  if (avgVoltage > 0 && avgVoltage < 11.5 && minVoltage >= 10.0) {
+    diagnostics.investigate.push({
+      title: '🔋 Overall Low Average Voltage',
+      body: `Average battery voltage during the match was only ${avgVoltage.toFixed(2)}V. A healthy battery should average above 12V during a match. This battery may be degraded.`,
+      evidence: `Avg voltage: ${avgVoltage.toFixed(2)}V | Min: ${minVoltage.toFixed(2)}V`,
+      action: 'Run a battery load test. Mark and retire batteries that can\'t maintain >12V under load. Use a battery beak or similar tool between matches.'
+    });
+  }
+
+  // ---- RULE 18: No match activity detected ----
+  if (matchRecords.length === 0) {
+    diagnostics.fixNow.push({
+      title: '❌ No Match Activity Detected',
+      body: 'The log shows no auto or teleop mode was ever enabled. The robot never participated in the match.',
+      evidence: `Total duration: ${totalDuration.toFixed(0)}s | All records in disabled/disconnected state`,
+      action: 'This usually means the robot never connected to the field. Check radio, Ethernet, and roboRIO connectivity. Verify team number in DS matches the field assignment.'
+    });
+  }
+
+  // ---- MONITORING / GREEN ITEMS ----
+  if (minVoltage >= 11.5 && brownouts.length === 0) {
+    diagnostics.monitor.push({
+      title: '✅ Battery Health OK',
+      body: `Min voltage stayed above 11.5V (${minVoltage.toFixed(2)}V) with no brownouts. Battery performance is acceptable.`,
+      evidence: `Min: ${minVoltage.toFixed(2)}V | Avg: ${avgVoltage.toFixed(2)}V`
+    });
+  }
+
+  if (maxPacketLoss <= 2.0 && commsFlickerRate < 0.5) {
+    diagnostics.monitor.push({
+      title: '✅ Communications Stable',
+      body: `Packet loss peaked at ${maxPacketLoss.toFixed(1)}% with stable connection. Network performance is good.`,
+      evidence: `Max loss: ${maxPacketLoss.toFixed(1)}% | Mode changes/s: ${commsFlickerRate.toFixed(2)}`
+    });
+  }
+
+  if (maxCan <= 0.50) {
+    diagnostics.monitor.push({
+      title: '✅ CAN Bus Healthy',
+      body: `CAN utilization peaked at ${(maxCan * 100).toFixed(0)}%, well within safe limits.`,
+      evidence: `Peak: ${(maxCan * 100).toFixed(1)}%`
+    });
+  }
+
+  return diagnostics;
+}
+
+// ==================== RENDER FUNCTIONS ====================
+let chartInstance = null;
+let modeChartInstance = null;
+let parsedLog = null;
+let parsedEvents = null;
+
+function renderDashboard(logData, eventData) {
+  parsedLog = logData;
+  parsedEvents = eventData;
+
+  document.getElementById('dropContainer').style.display = 'none';
+  document.getElementById('dashboard').classList.add('active');
+
+  // Set match badge
+  const fmsEvent = eventData.events.find(e => e.text.includes('FMS Connected'));
+  if (fmsEvent) {
+    const matchInfo = fmsEvent.text.match(/Qualification\s*-\s*(\d+)/i) ||
+                      fmsEvent.text.match(/Playoff\s*-\s*(\d+)/i) ||
+                      fmsEvent.text.match(/Practice\s*-\s*(\d+)/i);
+    if (matchInfo) {
+      const badge = document.getElementById('matchBadge');
+      const type = fmsEvent.text.includes('Qual') ? 'Qual' : fmsEvent.text.includes('Playoff') ? 'Playoff' : 'Practice';
+      badge.textContent = `${type} ${matchInfo[1]}`;
+      badge.style.display = 'inline-block';
+    }
+  }
+
+  document.getElementById('fileInfo').textContent = 
+    `${logData.records.length.toLocaleString()} records | ${(logData.records.length * 0.02 / 60).toFixed(1)} min`;
+
+  renderSummary(logData, eventData);
+  renderTimeline(logData, eventData);
+  renderErrors(eventData);
+  renderDiagnostics(logData, eventData);
+}
+
+function renderSummary(logData, eventData) {
+  const records = logData.records;
+  const matchRecs = records.filter(r => r.mode === 'auto' || r.mode === 'teleop');
+  const autoRecs = records.filter(r => r.mode === 'auto');
+  const teleopRecs = records.filter(r => r.mode === 'teleop');
+  const validV = matchRecs.filter(r => r.voltage !== null);
+  const minV = validV.length ? Math.min(...validV.map(r => r.voltage)) : 0;
+  const avgV = validV.length ? validV.reduce((s, r) => s + r.voltage, 0) / validV.length : 0;
+  const maxV = validV.length ? Math.max(...validV.map(r => r.voltage)) : 0;
+  const maxLoss = matchRecs.length ? Math.max(...matchRecs.map(r => r.packetLoss)) : 0;
+  const maxCan = matchRecs.length ? Math.max(...matchRecs.map(r => r.canUsage)) : 0;
+  const brownouts = records.filter(r => r.brownout).length;
+  const critErrors = eventData.events.filter(e => e.severity === 'critical').length;
+  const warnings = eventData.events.filter(e => e.severity === 'warning').length;
+
+  // Health score (0-100)
+  let health = 100;
+  if (minV < 8) health -= 40;
+  else if (minV < 10) health -= 25;
+  else if (minV < 11) health -= 10;
+  if (brownouts > 0) health -= 20;
+  if (maxLoss > 10) health -= 15;
+  else if (maxLoss > 5) health -= 8;
+  if (critErrors > 3) health -= 15;
+  else if (critErrors > 0) health -= 8;
+  if (autoRecs.length * 0.02 < 5 && autoRecs.length > 0) health -= 10;
+  if (matchRecs.length === 0) health = 5;
+  health = Math.max(0, Math.min(100, health));
+
+  const healthColor = health >= 75 ? 'var(--green)' : health >= 50 ? 'var(--yellow)' : 'var(--red)';
+  const healthLabel = health >= 75 ? 'Good Match' : health >= 50 ? 'Issues Detected' : 'Critical Problems';
+
+  document.getElementById('healthSection').innerHTML = `
+    <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:14px;">Match Health Score</div>
+    <div class="health-bar-container">
+      <div class="health-score-num" style="color:${healthColor}">${health}</div>
+      <div class="health-bar-track">
+        <div class="health-bar-fill" style="width:${health}%;background:${healthColor};"></div>
+      </div>
+      <div class="health-label" style="color:${healthColor}">${healthLabel}</div>
+    </div>
+  `;
+
+  // Mode bar
+  const totalRecs = records.length;
+  const segments = [];
+  let currentMode = records[0]?.mode || 'disconnected';
+  let segStart = 0;
+  for (let i = 1; i <= records.length; i++) {
+    const mode = i < records.length ? records[i].mode : null;
+    // Debounce: accumulate segments in blocks of 50 (1 second)
+    if (mode !== currentMode || i === records.length) {
+      segments.push({ mode: currentMode, start: segStart, end: i });
+      currentMode = mode;
+      segStart = i;
+    }
+  }
+
+  // Consolidate into major phases
+  const phases = [];
+  let curPhase = { mode: 'disconnected', count: 0 };
+  const blockSize = 50; // 1 second blocks
+  for (let b = 0; b < Math.ceil(totalRecs / blockSize); b++) {
+    const blockStart = b * blockSize;
+    const blockEnd = Math.min((b + 1) * blockSize, totalRecs);
+    const blockRecs = records.slice(blockStart, blockEnd);
+    // Dominant mode in this block
+    const modeCounts = {};
+    blockRecs.forEach(r => { modeCounts[r.mode] = (modeCounts[r.mode] || 0) + 1; });
+    let dominant = Object.entries(modeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'disconnected';
+    
+    if (dominant === curPhase.mode) {
+      curPhase.count++;
+    } else {
+      if (curPhase.count > 0) phases.push({ ...curPhase });
+      curPhase = { mode: dominant, count: 1 };
+    }
+  }
+  if (curPhase.count > 0) phases.push(curPhase);
+
+  const totalBlocks = phases.reduce((s, p) => s + p.count, 0);
+  const modeBarHTML = phases.map(p => {
+    const pct = (p.count / totalBlocks * 100);
+    const label = pct > 8 ? `${(p.count).toFixed(0)}s` : '';
+    return `<div class="segment ${p.mode}" style="width:${pct}%">${label}</div>`;
+  }).join('');
+
+  document.getElementById('modeBarSection').innerHTML = `
+    <h3>Match Mode Timeline</h3>
+    <div class="mode-bar">${modeBarHTML}</div>
+    <div class="mode-legend">
+      <span><div class="dot" style="background:var(--auto-color)"></div> Auto (${(autoRecs.length * 0.02).toFixed(1)}s)</span>
+      <span><div class="dot" style="background:var(--teleop-color)"></div> Teleop (${(teleopRecs.length * 0.02).toFixed(1)}s)</span>
+      <span><div class="dot" style="background:var(--disabled-color)"></div> Disabled</span>
+      <span><div class="dot" style="background:#E5E7EB"></div> Disconnected</span>
+    </div>
+  `;
+
+  // Stat cards
+  const vClass = minV < 10 ? 'danger' : minV < 11 ? 'warning' : 'good';
+  const lossClass = maxLoss > 5 ? 'warning' : 'good';
+  const canClass = maxCan > 0.7 ? 'warning' : 'good';
+
+  document.getElementById('summaryGrid').innerHTML = `
+    <div class="stat-card ${vClass}">
+      <div class="label">Min Voltage</div>
+      <div class="value">${minV > 0 ? minV.toFixed(1) + 'V' : 'N/A'}</div>
+      <div class="sub">Avg ${avgV.toFixed(1)}V · Max ${maxV.toFixed(1)}V</div>
+    </div>
+    <div class="stat-card ${lossClass}">
+      <div class="label">Peak Packet Loss</div>
+      <div class="value">${maxLoss.toFixed(1)}%</div>
+      <div class="sub">During match play</div>
+    </div>
+    <div class="stat-card ${canClass}">
+      <div class="label">Peak CAN Usage</div>
+      <div class="value">${(maxCan * 100).toFixed(0)}%</div>
+      <div class="sub">&gt;70% = congestion risk</div>
+    </div>
+    <div class="stat-card info">
+      <div class="label">Auto Duration</div>
+      <div class="value">${(autoRecs.length * 0.02).toFixed(1)}s</div>
+      <div class="sub">Expected: 15s</div>
+    </div>
+    <div class="stat-card info">
+      <div class="label">Teleop Duration</div>
+      <div class="value">${(teleopRecs.length * 0.02).toFixed(1)}s</div>
+      <div class="sub">Expected: ~135s</div>
+    </div>
+    <div class="stat-card ${brownouts > 0 ? 'danger' : 'good'}">
+      <div class="label">Brownouts</div>
+      <div class="value">${brownouts}</div>
+      <div class="sub">${brownouts > 0 ? 'Motor outputs disabled!' : 'None detected'}</div>
+    </div>
+    <div class="stat-card ${critErrors > 0 ? 'danger' : 'good'}">
+      <div class="label">Critical Errors</div>
+      <div class="value">${critErrors}</div>
+      <div class="sub">${warnings} warnings</div>
+    </div>
+    <div class="stat-card info">
+      <div class="label">Total Events</div>
+      <div class="value">${eventData.events.length}</div>
+      <div class="sub">${logData.records.length.toLocaleString()} log records</div>
+    </div>
+  `;
+}
+
+function renderTimeline(logData, eventData) {
+  // Downsample records for chart performance (target ~2000 points)
+  const records = logData.records;
+  const step = Math.max(1, Math.floor(records.length / 2000));
+  const sampled = [];
+  for (let i = 0; i < records.length; i += step) {
+    sampled.push(records[i]);
+  }
+
+  // Controls
+  const controls = ['Voltage', 'Packet Loss', 'CAN Usage', 'roboRIO CPU', 'Trip Time'];
+  const active = { 'Voltage': true, 'Packet Loss': true, 'CAN Usage': false, 'roboRIO CPU': false, 'Trip Time': false };
+  
+  document.getElementById('chartControls').innerHTML = controls.map(c =>
+    `<button class="chart-toggle ${active[c] ? 'active' : ''}" data-series="${c}">${c}</button>`
+  ).join('');
+
+  document.querySelectorAll('.chart-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      btn.classList.toggle('active');
+      updateChart();
+    });
+  });
+
+  function getActiveSeries() {
+    return Array.from(document.querySelectorAll('.chart-toggle.active')).map(b => b.dataset.series);
+  }
+
+  const colors = {
+    'Voltage': { line: '#C41E1E', bg: 'rgba(196,30,30,0.08)' },
+    'Packet Loss': { line: '#B8860B', bg: 'rgba(184,134,11,0.08)' },
+    'CAN Usage': { line: '#1E5FC4', bg: 'rgba(30,95,196,0.08)' },
+    'roboRIO CPU': { line: '#7C3AED', bg: 'rgba(124,58,237,0.08)' },
+    'Trip Time': { line: '#059669', bg: 'rgba(5,150,105,0.08)' }
+  };
+
+  const getDataForSeries = (name) => {
+    return sampled.map(r => {
+      switch (name) {
+        case 'Voltage': return r.voltage;
+        case 'Packet Loss': return r.packetLoss;
+        case 'CAN Usage': return r.canUsage * 100;
+        case 'roboRIO CPU': return r.rioCpu * 100;
+        case 'Trip Time': return r.tripTime;
+        default: return null;
+      }
+    });
+  };
+
+  const labels = sampled.map(r => r.time_s.toFixed(1));
+
+  // Mode background plugin
+  const modeBgPlugin = {
+    id: 'modeBackground',
+    beforeDraw(chart) {
+      const ctx = chart.ctx;
+      const xScale = chart.scales.x;
+      const yScale = chart.scales.y;
+      const meta = chart.getDatasetMeta(0);
+      if (!meta.data.length) return;
+
+      // Draw mode bands
+      let prevMode = sampled[0]?.mode;
+      let bandStart = 0;
+      for (let i = 1; i <= sampled.length; i++) {
+        const mode = i < sampled.length ? sampled[i].mode : null;
+        if (mode !== prevMode || i === sampled.length) {
+          const x1 = meta.data[bandStart]?.x ?? xScale.left;
+          const x2 = meta.data[Math.min(i - 1, meta.data.length - 1)]?.x ?? xScale.right;
+          let color = 'rgba(229,231,235,0.25)';
+          if (prevMode === 'auto') color = 'rgba(59,130,246,0.12)';
+          else if (prevMode === 'teleop') color = 'rgba(34,197,94,0.10)';
+          else if (prevMode === 'disabled') color = 'rgba(156,163,175,0.10)';
+          
+          ctx.fillStyle = color;
+          ctx.fillRect(x1, yScale.top, x2 - x1, yScale.bottom - yScale.top);
+          
+          prevMode = mode;
+          bandStart = i;
+        }
+      }
+    }
+  };
+
+  function buildChart() {
+    const activeSeries = getActiveSeries();
+    const datasets = activeSeries.map(name => ({
+      label: name,
+      data: getDataForSeries(name),
+      borderColor: colors[name].line,
+      backgroundColor: colors[name].bg,
+      borderWidth: 1.5,
+      pointRadius: 0,
+      pointHitRadius: 4,
+      fill: true,
+      tension: 0.2,
+      yAxisID: name === 'Voltage' ? 'yVoltage' : 'yPercent',
+      spanGaps: true
+    }));
+
+    const hasVoltage = activeSeries.includes('Voltage');
+    const hasOther = activeSeries.some(s => s !== 'Voltage');
+
+    const scales = { x: { display: true, title: { display: true, text: 'Time (s)', font: { family: 'JetBrains Mono', size: 11 } }, ticks: { font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 20 } } };
+    
+    if (hasVoltage) {
+      scales.yVoltage = {
+        type: 'linear', display: true, position: 'left',
+        title: { display: true, text: 'Voltage (V)', font: { family: 'JetBrains Mono', size: 11 } },
+        min: 6, max: 14,
+        ticks: { font: { family: 'JetBrains Mono', size: 10 } },
+        grid: { color: 'rgba(0,0,0,0.05)' }
+      };
+    }
+    if (hasOther) {
+      scales.yPercent = {
+        type: 'linear', display: true, position: hasVoltage ? 'right' : 'left',
+        title: { display: true, text: '%', font: { family: 'JetBrains Mono', size: 11 } },
+        min: 0, max: 100,
+        ticks: { font: { family: 'JetBrains Mono', size: 10 } },
+        grid: { drawOnChartArea: !hasVoltage, color: 'rgba(0,0,0,0.05)' }
+      };
+    }
+    // If only voltage and no percentage-based series
+    if (hasVoltage && !hasOther) {
+        scales.yPercent = { display: false };
+    }
+    if (!hasVoltage && hasOther) {
+        scales.yVoltage = { display: false };
+    }
+
+    return { datasets, scales };
+  }
+
+  function updateChart() {
+    const { datasets, scales } = buildChart();
+    if (chartInstance) {
+      chartInstance.data.datasets = datasets;
+      chartInstance.options.scales = scales;
+      chartInstance.update();
+    }
+  }
+
+  const { datasets, scales } = buildChart();
+  
+  if (chartInstance) chartInstance.destroy();
+  chartInstance = new Chart(document.getElementById('timelineChart'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', labels: { font: { family: 'Outfit', size: 12 }, usePointStyle: true, pointStyle: 'line' } },
+        tooltip: {
+          titleFont: { family: 'JetBrains Mono', size: 12 },
+          bodyFont: { family: 'JetBrains Mono', size: 11 },
+          callbacks: {
+            title: (items) => {
+              const idx = items[0].dataIndex;
+              const r = sampled[idx];
+              return `${r.time_s.toFixed(1)}s — ${r.mode.toUpperCase()}`;
+            }
+          }
+        }
+      },
+      scales
+    },
+    plugins: [modeBgPlugin]
+  });
+
+  // Mini mode chart
+  const modeLabels = sampled.map(r => r.time_s.toFixed(1));
+  const modeValues = sampled.map(r => r.mode === 'auto' ? 3 : r.mode === 'teleop' ? 2 : r.mode === 'disabled' ? 1 : 0);
+  const modeColors = sampled.map(r => r.mode === 'auto' ? 'rgba(59,130,246,0.9)' : r.mode === 'teleop' ? 'rgba(34,197,94,0.9)' : r.mode === 'disabled' ? 'rgba(156,163,175,0.6)' : 'rgba(229,231,235,0.5)');
+
+  if (modeChartInstance) modeChartInstance.destroy();
+  modeChartInstance = new Chart(document.getElementById('modeChart'), {
+    type: 'bar',
+    data: {
+      labels: modeLabels,
+      datasets: [{
+        data: modeValues.map(() => 1),
+        backgroundColor: modeColors,
+        barPercentage: 1.0,
+        categoryPercentage: 1.0,
+        borderWidth: 0
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: {
+        callbacks: {
+          label: (ctx) => {
+            const r = sampled[ctx.dataIndex];
+            return `${r.time_s.toFixed(1)}s: ${r.mode.toUpperCase()}`;
+          }
+        }
+      }},
+      scales: {
+        x: { display: false },
+        y: { display: false, max: 1 }
+      }
+    }
+  });
+}
+
+function renderErrors(eventData) {
+  const events = eventData.events;
+  
+  // Filter out system status (info roboRIO repeated) - keep unique meaningful events
+  const meaningful = [];
+  const seen = new Set();
+  for (const e of events) {
+    // Group repeated system status messages
+    if (e.title === 'System Status' && e.text.includes('Info roboRIO')) {
+      if (!seen.has('sysStatus')) {
+        seen.add('sysStatus');
+        meaningful.push({ ...e, count: events.filter(ev => ev.title === 'System Status').length });
+      }
+      continue;
+    }
+    // Dedup by title + first 60 chars
+    const key = e.title + '|' + e.text.substring(0, 60);
+    if (seen.has(key)) {
+      const existing = meaningful.find(m => (m.title + '|' + m.text.substring(0, 60)) === key);
+      if (existing) existing.count = (existing.count || 1) + 1;
+      continue;
+    }
+    seen.add(key);
+    meaningful.push({ ...e, count: 1 });
+  }
+
+  // Sort: critical first, then warning, then info
+  const severityOrder = { critical: 0, warning: 1, info: 2 };
+  meaningful.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+
+  // Filters
+  const critCount = meaningful.filter(e => e.severity === 'critical').length;
+  const warnCount = meaningful.filter(e => e.severity === 'warning').length;
+  const infoCount = meaningful.filter(e => e.severity === 'info').length;
+
+  document.getElementById('errorFilters').innerHTML = `
+    <button class="filter-chip active" data-filter="all">All <span class="count">${meaningful.length}</span></button>
+    <button class="filter-chip" data-filter="critical">Critical <span class="count">${critCount}</span></button>
+    <button class="filter-chip" data-filter="warning">Warning <span class="count">${warnCount}</span></button>
+    <button class="filter-chip" data-filter="info">Info <span class="count">${infoCount}</span></button>
+  `;
+
+  function renderList(filter) {
+    const filtered = filter === 'all' ? meaningful : meaningful.filter(e => e.severity === filter);
+    document.getElementById('errorList').innerHTML = filtered.length === 0 
+      ? '<div class="no-issues">No events matching this filter.</div>'
+      : filtered.map((e, i) => `
+        <div class="error-item ${e.severity}" onclick="this.classList.toggle('expanded')">
+          <div class="error-header">
+            <span class="severity-badge ${e.severity}">${e.severity}</span>
+            <span class="error-title">${escapeHtml(e.title)}</span>
+            ${e.count > 1 ? `<span class="error-count">×${e.count}</span>` : ''}
+            <span class="error-time">${e.time_s >= 0 ? e.time_s.toFixed(1) + 's' : 'pre-match'}</span>
+          </div>
+          <div class="error-detail">${escapeHtml(e.text)}</div>
+        </div>
+      `).join('');
+  }
+
+  renderList('all');
+
+  document.querySelectorAll('.filter-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      renderList(chip.dataset.filter);
+    });
+  });
+}
+
+function renderDiagnostics(logData, eventData) {
+  const diag = runDiagnostics(logData, eventData);
+  const container = document.getElementById('diagnosticsContent');
+  let html = '';
+
+  if (diag.fixNow.length > 0) {
+    html += `<div class="diag-section-title">🔴 Fix Before Next Match</div>`;
+    html += `<div class="action-cards">${diag.fixNow.map(d => `
+      <div class="action-card fix-now">
+        <div class="card-priority">Fix Now</div>
+        <div class="card-title">${d.title}</div>
+        <div class="card-body">${d.body}</div>
+        ${d.action ? `<div class="card-body" style="margin-top:10px;font-weight:600;color:var(--red);">→ ${d.action}</div>` : ''}
+        <div class="card-evidence">${escapeHtml(d.evidence || '')}</div>
+      </div>
+    `).join('')}</div>`;
+  }
+
+  if (diag.investigate.length > 0) {
+    html += `<div class="diag-section-title">🟡 Investigate When Possible</div>`;
+    html += `<div class="action-cards">${diag.investigate.map(d => `
+      <div class="action-card investigate">
+        <div class="card-priority">Investigate</div>
+        <div class="card-title">${d.title}</div>
+        <div class="card-body">${d.body}</div>
+        ${d.action ? `<div class="card-body" style="margin-top:10px;font-weight:600;color:var(--yellow);">→ ${d.action}</div>` : ''}
+        <div class="card-evidence">${escapeHtml(d.evidence || '')}</div>
+      </div>
+    `).join('')}</div>`;
+  }
+
+  if (diag.monitor.length > 0) {
+    html += `<div class="diag-section-title">🟢 Systems Healthy</div>`;
+    html += `<div class="action-cards">${diag.monitor.map(d => `
+      <div class="action-card monitor">
+        <div class="card-priority">OK</div>
+        <div class="card-title">${d.title}</div>
+        <div class="card-body">${d.body}</div>
+        <div class="card-evidence">${escapeHtml(d.evidence || '')}</div>
+      </div>
+    `).join('')}</div>`;
+  }
+
+  if (diag.fixNow.length === 0 && diag.investigate.length === 0) {
+    html += `<div class="no-issues">🎉 No significant issues detected. Great match!</div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ==================== FILE HANDLING ====================
+let loadedFiles = {};
+
+function handleFiles(files) {
+  for (const file of files) {
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (ext === 'dslog' || ext === 'dsevents') {
+      loadedFiles[ext] = file;
+    }
+  }
+
+  if (loadedFiles.dslog && loadedFiles.dsevents) {
+    Promise.all([
+      loadedFiles.dslog.arrayBuffer(),
+      loadedFiles.dsevents.arrayBuffer()
+    ]).then(([logBuf, evBuf]) => {
+      try {
+        const logData = parseDSLog(logBuf);
+        const eventData = parseDSEvents(evBuf);
+        renderDashboard(logData, eventData);
+      } catch (err) {
+        alert('Error parsing log files: ' + err.message);
+        console.error(err);
+      }
+    });
+  } else if (loadedFiles.dslog || loadedFiles.dsevents) {
+    // Only one file loaded so far
+    const have = loadedFiles.dslog ? '.dslog' : '.dsevents';
+    const need = loadedFiles.dslog ? '.dsevents' : '.dslog';
+    document.querySelector('.drop-zone p').innerHTML = 
+      `<strong style="color:var(--green)">✓ ${have} loaded</strong><br>Now drop the matching <strong>${need}</strong> file`;
+  }
+}
+
+// Drop zone events
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+
+['dragenter', 'dragover'].forEach(evtName => {
+  dropZone.addEventListener(evtName, (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+});
+['dragleave', 'drop'].forEach(evtName => {
+  dropZone.addEventListener(evtName, (e) => { e.preventDefault(); dropZone.classList.remove('drag-over'); });
+});
+dropZone.addEventListener('drop', (e) => handleFiles(e.dataTransfer.files));
+
+// Also allow dropping anywhere on the page
+document.body.addEventListener('dragover', (e) => e.preventDefault());
+document.body.addEventListener('drop', (e) => { e.preventDefault(); handleFiles(e.dataTransfer.files); });
+
+// Tab switching
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    // Resize chart when timeline tab becomes visible
+    if (btn.dataset.tab === 'timeline' && chartInstance) {
+      setTimeout(() => { chartInstance.resize(); if (modeChartInstance) modeChartInstance.resize(); }, 50);
+    }
+  });
+});
+
+function resetDashboard() {
+  loadedFiles = {};
+  parsedLog = null;
+  parsedEvents = null;
+  document.getElementById('dropContainer').style.display = 'flex';
+  document.getElementById('dashboard').classList.remove('active');
+  document.getElementById('matchBadge').style.display = 'none';
+  document.querySelector('.drop-zone p').innerHTML = 'Drag & drop your <strong>.dslog</strong> and <strong>.dsevents</strong> files<br>or click to browse';
+  if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+  if (modeChartInstance) { modeChartInstance.destroy(); modeChartInstance = null; }
+}
+</script>
+</body>
+</html>
