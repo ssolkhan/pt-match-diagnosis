@@ -1504,7 +1504,7 @@ function renderTimeline(logData, eventData) {
     if (hasOther) {
       scales.yPercent = {
         type: 'linear', display: true, position: hasVoltage ? 'right' : 'left',
-        title: { display: true, text: '%', font: { family: 'JetBrains Mono', size: 11 } },
+        title: { display: true, text: 'CPU / CAN / Loss / Trip (%)', font: { family: 'JetBrains Mono', size: 11 } },
         min: 0, max: 100,
         ticks: { font: { family: 'JetBrains Mono', size: 10 } },
         grid: { drawOnChartArea: !hasVoltage, color: 'rgba(0,0,0,0.05)' }
@@ -1559,7 +1559,7 @@ function renderTimeline(logData, eventData) {
     plugins: [modeBgPlugin]
   });
 
-  // Mini mode chart
+  // Mini mode chart with legend
   const modeLabels = sampled.map(r => r.time_s.toFixed(1));
   const modeValues = sampled.map(r => r.mode === 'auto' ? 3 : r.mode === 'teleop' ? 2 : r.mode === 'disabled' ? 1 : 0);
   const modeColors = sampled.map(r => r.mode === 'auto' ? 'rgba(59,130,246,0.9)' : r.mode === 'teleop' ? 'rgba(34,197,94,0.9)' : r.mode === 'disabled' ? 'rgba(156,163,175,0.6)' : 'rgba(229,231,235,0.5)');
@@ -1570,6 +1570,7 @@ function renderTimeline(logData, eventData) {
     data: {
       labels: modeLabels,
       datasets: [{
+        label: 'Robot Mode',
         data: modeValues.map(() => 1),
         backgroundColor: modeColors,
         barPercentage: 1.0,
@@ -1580,16 +1581,21 @@ function renderTimeline(logData, eventData) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: {
-        callbacks: {
-          label: (ctx) => {
-            const r = sampled[ctx.dataIndex];
-            return `${r.time_s.toFixed(1)}s: ${r.mode.toUpperCase()}`;
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const r = sampled[ctx.dataIndex];
+              return `${r.time_s.toFixed(1)}s: ${r.mode.toUpperCase()}`;
+            }
           }
         }
-      }},
+      },
       scales: {
-        x: { display: false },
+        x: { display: true, ticks: { display: false }, grid: { display: false },
+          title: { display: true, text: 'Robot Mode:   🔵 Auto    🟢 Teleop    ⚫ Disabled    ⬜ Disconnected', font: { family: 'Outfit', size: 12 }, color: '#6B6560' }
+        },
         y: { display: false, max: 1 }
       }
     }
@@ -1648,12 +1654,7 @@ function renderErrors(eventData) {
 
   function formatEventTime(time_s) {
     if (time_s === undefined || time_s === null) return 'unknown';
-    const absT = Math.abs(time_s);
-    const min = Math.floor(absT / 60);
-    const sec = (absT % 60).toFixed(1);
-    const sign = time_s < 0 ? '-' : '';
-    if (min > 0) return `${sign}${min}m ${sec}s`;
-    return `${sign}${sec}s`;
+    return `${time_s.toFixed(1)}s`;
   }
 
   function sortEvents(list, sortType) {
