@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>🔥 PyroTech Match Autopsy</title>
+<title>🔥 PyroTech Match Diagnostics</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔥</text></svg>">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
@@ -642,8 +642,8 @@ body {
 <!-- HEADER -->
 <div class="header">
   <div class="header-logo">
-    <span class="fire-icon">🔥</span>
-    <h1>PyroTech <span>Match Autopsy</span></h1>
+    <img src="data:image/jpeg;base64,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" alt="PyroTech 3459" style="height:36px;border-radius:4px;">
+    <h1>PyroTech <span>Match Diagnostics</span></h1>
   </div>
   <div class="header-meta">
     <div class="match-badge" id="matchBadge"></div>
@@ -668,7 +668,7 @@ body {
     <button class="tab-btn active" data-tab="summary">🔥 Match Summary</button>
     <button class="tab-btn" data-tab="timeline">📈 Unified Timeline</button>
     <button class="tab-btn" data-tab="errors">⚠️ Errors & Warnings</button>
-    <button class="tab-btn" data-tab="diagnostics">🩺 AI Diagnostics</button>
+    <button class="tab-btn" data-tab="diagnostics">🩺 Insights</button>
   </div>
 
   <!-- TAB: Match Summary -->
@@ -1244,9 +1244,10 @@ function renderDashboard(logData, eventData) {
     `${logData.records.length.toLocaleString()} records | ${(logData.records.length * 0.02 / 60).toFixed(1)} min`;
 
   renderSummary(logData, eventData);
-  renderTimeline(logData, eventData);
   renderErrors(eventData);
   renderDiagnostics(logData, eventData);
+  // Timeline is deferred until tab is first shown (Chart.js needs visible container)
+  timelineNeedsRender = true;
 }
 
 function renderSummary(logData, eventData) {
@@ -1645,10 +1646,41 @@ function renderErrors(eventData) {
     <button class="filter-chip" data-filter="critical">Critical <span class="count">${critCount}</span></button>
     <button class="filter-chip" data-filter="warning">Warning <span class="count">${warnCount}</span></button>
     <button class="filter-chip" data-filter="info">Info <span class="count">${infoCount}</span></button>
+    <span style="margin-left:auto;display:flex;gap:4px;align-items:center;">
+      <span style="font-size:11px;color:var(--text-muted);">Sort:</span>
+      <button class="filter-chip active" data-sort="severity">By Severity</button>
+      <button class="filter-chip" data-sort="time-desc">Latest First</button>
+      <button class="filter-chip" data-sort="time-asc">Earliest First</button>
+    </span>
   `;
 
+  let currentSort = 'severity';
+
+  function formatEventTime(time_s) {
+    if (time_s === undefined || time_s === null) return 'unknown';
+    const absT = Math.abs(time_s);
+    const min = Math.floor(absT / 60);
+    const sec = (absT % 60).toFixed(1);
+    const sign = time_s < 0 ? '-' : '';
+    if (min > 0) return `${sign}${min}m ${sec}s`;
+    return `${sign}${sec}s`;
+  }
+
+  function sortEvents(list, sortType) {
+    const sorted = [...list];
+    if (sortType === 'severity') {
+      sorted.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+    } else if (sortType === 'time-desc') {
+      sorted.sort((a, b) => (b.time_s || 0) - (a.time_s || 0));
+    } else if (sortType === 'time-asc') {
+      sorted.sort((a, b) => (a.time_s || 0) - (b.time_s || 0));
+    }
+    return sorted;
+  }
+
   function renderList(filter) {
-    const filtered = filter === 'all' ? meaningful : meaningful.filter(e => e.severity === filter);
+    let filtered = filter === 'all' ? meaningful : meaningful.filter(e => e.severity === filter);
+    filtered = sortEvents(filtered, currentSort);
     document.getElementById('errorList').innerHTML = filtered.length === 0 
       ? '<div class="no-issues">No events matching this filter.</div>'
       : filtered.map((e, i) => `
@@ -1657,7 +1689,7 @@ function renderErrors(eventData) {
             <span class="severity-badge ${e.severity}">${e.severity}</span>
             <span class="error-title">${escapeHtml(e.title)}</span>
             ${e.count > 1 ? `<span class="error-count">×${e.count}</span>` : ''}
-            <span class="error-time">${e.time_s >= 0 ? e.time_s.toFixed(1) + 's' : 'pre-match'}</span>
+            <span class="error-time" title="Time since log start">${formatEventTime(e.time_s)}</span>
           </div>
           <div class="error-detail">${escapeHtml(e.text)}</div>
         </div>
@@ -1666,11 +1698,22 @@ function renderErrors(eventData) {
 
   renderList('all');
 
-  document.querySelectorAll('.filter-chip').forEach(chip => {
+  let currentFilter = 'all';
+  document.querySelectorAll('.filter-chip[data-filter]').forEach(chip => {
     chip.addEventListener('click', () => {
-      document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+      document.querySelectorAll('.filter-chip[data-filter]').forEach(c => c.classList.remove('active'));
       chip.classList.add('active');
-      renderList(chip.dataset.filter);
+      currentFilter = chip.dataset.filter;
+      renderList(currentFilter);
+    });
+  });
+
+  document.querySelectorAll('.filter-chip[data-sort]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.filter-chip[data-sort]').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      currentSort = chip.dataset.sort;
+      renderList(currentFilter);
     });
   });
 }
@@ -1782,6 +1825,8 @@ dropZone.addEventListener('drop', (e) => handleFiles(e.dataTransfer.files));
 document.body.addEventListener('dragover', (e) => e.preventDefault());
 document.body.addEventListener('drop', (e) => { e.preventDefault(); handleFiles(e.dataTransfer.files); });
 
+let timelineNeedsRender = false;
+
 // Tab switching
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -1789,9 +1834,16 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-    // Resize chart when timeline tab becomes visible
-    if (btn.dataset.tab === 'timeline' && chartInstance) {
-      setTimeout(() => { chartInstance.resize(); if (modeChartInstance) modeChartInstance.resize(); }, 50);
+    // Render timeline on first visit (Chart.js needs visible container)
+    if (btn.dataset.tab === 'timeline') {
+      if (timelineNeedsRender && parsedLog && parsedEvents) {
+        setTimeout(() => {
+          renderTimeline(parsedLog, parsedEvents);
+          timelineNeedsRender = false;
+        }, 50);
+      } else if (chartInstance) {
+        setTimeout(() => { chartInstance.resize(); if (modeChartInstance) modeChartInstance.resize(); }, 50);
+      }
     }
   });
 });
@@ -1800,6 +1852,7 @@ function resetDashboard() {
   loadedFiles = {};
   parsedLog = null;
   parsedEvents = null;
+  timelineNeedsRender = false;
   document.getElementById('dropContainer').style.display = 'flex';
   document.getElementById('dashboard').classList.remove('active');
   document.getElementById('matchBadge').style.display = 'none';
