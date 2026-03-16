@@ -630,6 +630,110 @@ body {
   .stat-card .value { font-size: 22px; }
 }
 
+/* ========== CROSS-HIGHLIGHT ========== */
+.error-item.highlighted {
+  background: var(--yellow-bg) !important;
+  border-color: var(--yellow-border) !important;
+  box-shadow: var(--shadow-md);
+}
+
+.error-item .seek-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--maroon);
+  margin-left: 6px;
+  transition: all 0.15s;
+}
+.error-item .seek-btn:hover { background: var(--maroon); color: white; }
+
+/* ========== PIT BRIEF ========== */
+.pit-scores {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.pit-score-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 32px;
+  text-align: center;
+  transition: transform 0.15s;
+}
+.pit-score-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+
+.stoplight {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  margin: 0 auto 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  font-weight: 800;
+  font-family: 'JetBrains Mono', monospace;
+  color: white;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+}
+.stoplight.red { background: linear-gradient(135deg, #C41E1E, #E53E3E); }
+.stoplight.yellow { background: linear-gradient(135deg, #B8860B, #D4A017); }
+.stoplight.green { background: linear-gradient(135deg, #1B7D3A, #38A169); }
+
+.pit-score-label {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.pit-score-detail {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+/* ========== POWER HEATMAP ========== */
+.top-consumers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.consumer-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  border-left: 4px solid var(--fire);
+}
+
+.consumer-card .ch-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.consumer-card .ch-value {
+  font-size: 24px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--fire);
+}
+
+.consumer-card .ch-sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 /* ========== SCROLLBAR ========== */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: var(--surface-alt); }
@@ -668,8 +772,10 @@ body {
   <div class="tabs">
     <button class="tab-btn active" data-tab="summary">🔥 Match Summary</button>
     <button class="tab-btn" data-tab="timeline">📈 Unified Timeline</button>
+    <button class="tab-btn" data-tab="power">⚡ Power</button>
     <button class="tab-btn" data-tab="errors">⚠️ Errors & Warnings</button>
     <button class="tab-btn" data-tab="diagnostics">🩺 Insights</button>
+    <button class="tab-btn" data-tab="pitbrief">🚦 Pit Brief</button>
   </div>
 
   <!-- TAB: Match Summary -->
@@ -690,15 +796,28 @@ body {
     </div>
   </div>
 
+  <!-- TAB: Power Distribution -->
+  <div class="tab-panel" id="tab-power">
+    <div id="powerTopConsumers" style="margin-bottom:16px;"></div>
+    <div class="chart-container" style="position:relative;height:350px;">
+      <canvas id="powerChart"></canvas>
+    </div>
+  </div>
+
   <!-- TAB: Errors & Warnings -->
   <div class="tab-panel" id="tab-errors">
     <div class="error-filters" id="errorFilters"></div>
     <div class="error-list" id="errorList"></div>
   </div>
 
-  <!-- TAB: AI Diagnostics -->
+  <!-- TAB: Insights -->
   <div class="tab-panel" id="tab-diagnostics">
     <div id="diagnosticsContent"></div>
+  </div>
+
+  <!-- TAB: Pit Brief -->
+  <div class="tab-panel" id="tab-pitbrief">
+    <div id="pitBriefContent"></div>
   </div>
 
 </div>
@@ -763,28 +882,27 @@ function parseDSLog(buffer) {
     else if (robotDisabled) mode = 'disabled';
 
     // Parse PDP/PDH total current from remaining record bytes
-    // V4: bytes 10-13 are PDP header (byte 12 = type: 25=CTRE, 33=REV, 0=none)
-    // Then 10-bit packed currents for up to 24 channels
+    // Parse PDP/PDH per-channel currents
     let totalCurrent = 0;
+    const pdpChannels = new Float32Array(16);
     const pdpBase = offset + 10;
     const pdpType = version === 4 ? view.getUint8(pdpBase + 2) : 0;
     if (pdpType > 0) {
-      // Read the last 2 bytes of PDP block as total current estimate (voltage * rough current)
-      // For v4: simplified — sum first 16 channels from packed 10-bit values
       const pdpDataStart = version === 4 ? pdpBase + 4 : pdpBase;
       const pdpBytes = new Uint8Array(buffer, pdpDataStart, version === 4 ? 33 : 25);
-      // Extract 10-bit packed channel currents (6 per 64-bit block, 3 blocks = 18+ channels)
       function get10bit(bytes, bitOffset) {
         const byteIdx = Math.floor(bitOffset / 8);
         const bitShift = bitOffset % 8;
         if (byteIdx + 1 >= bytes.length) return 0;
         const val = (bytes[byteIdx] << 8 | bytes[byteIdx + 1]) >> (6 - bitShift);
-        return (val & 0x3FF) / 8.0; // 10-bit, divide by 8 for amps
+        return (val & 0x3FF) / 8.0;
       }
       const channelBitOffsets = [8,18,28,38,48,58, 72,82,92,102,112,122, 136,146,156,166];
-      for (const bo of channelBitOffsets) {
+      for (let ch = 0; ch < channelBitOffsets.length; ch++) {
+        const bo = channelBitOffsets[ch];
         if (Math.floor(bo/8) + 1 < pdpBytes.length) {
-          totalCurrent += get10bit(pdpBytes, bo);
+          pdpChannels[ch] = get10bit(pdpBytes, bo);
+          totalCurrent += pdpChannels[ch];
         }
       }
     }
@@ -794,7 +912,7 @@ function parseDSLog(buffer) {
       timestamp: new Date(startTime.getTime() + i * 20),
       tripTime, packetLoss, voltage, rioCpu, canUsage, wifiDb, bandwidth,
       robotDisabled, robotAuto, robotTele, dsDisabled, dsAuto, dsTele,
-      watchdog, brownout, mode, totalCurrent
+      watchdog, brownout, mode, totalCurrent, pdpChannels: Array.from(pdpChannels)
     });
   }
 
@@ -1442,8 +1560,10 @@ function renderDashboard(logData, eventData) {
   renderSummary(logData, eventData);
   renderErrors(eventData);
   renderDiagnostics(logData, eventData);
-  // Timeline is deferred until tab is first shown (Chart.js needs visible container)
+  renderPitBrief(logData, eventData);
+  // Timeline and Power charts deferred until tab is first shown (Chart.js needs visible container)
   timelineNeedsRender = true;
+  powerNeedsRender = true;
 }
 
 function renderSummary(logData, eventData) {
@@ -1752,11 +1872,22 @@ function renderTimeline(logData, eventData) {
         tooltip: {
           titleFont: { family: 'JetBrains Mono', size: 12 },
           bodyFont: { family: 'JetBrains Mono', size: 11 },
+          footerFont: { family: 'JetBrains Mono', size: 10 },
+          footerColor: '#FFD700',
           callbacks: {
             title: (items) => {
               const idx = items[0].dataIndex;
               const r = sampled[idx];
               return `${r.time_s.toFixed(1)}s — ${r.mode.toUpperCase()}`;
+            },
+            footer: (items) => {
+              if (!parsedEvents || !items.length) return '';
+              const t = sampled[items[0].dataIndex].time_s;
+              const nearby = parsedEvents.events
+                .filter(e => Math.abs(e.time_s - t) < 3 && e.severity !== 'info')
+                .slice(0, 3)
+                .map(e => `[${e.severity.toUpperCase()}] ${e.title.substring(0, 50)}`);
+              return nearby.length ? ['--- Nearby Events ---', ...nearby] : [];
             }
           }
         }
@@ -1888,6 +2019,7 @@ function renderErrors(eventData) {
             <span class="error-title">${escapeHtml(e.title)}</span>
             ${e.count > 1 ? `<span class="error-count">×${e.count}</span>` : ''}
             <span class="error-time" title="Time since log start">${formatEventTime(e.time_s)}</span>
+            <button class="seek-btn" onclick="event.stopPropagation(); seekTimeline(${e.time_s || 0})">📈 Seek</button>
           </div>
           <div class="error-detail">${escapeHtml(e.text)}</div>
         </div>
@@ -1970,6 +2102,220 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// ==================== CROSS-HIGHLIGHT: SEEK TIMELINE FROM ERRORS ====================
+function seekTimeline(time_s) {
+  // Switch to timeline tab
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelector('[data-tab="timeline"]').classList.add('active');
+  document.getElementById('tab-timeline').classList.add('active');
+
+  if (timelineNeedsRender && parsedLog && parsedEvents) {
+    renderTimeline(parsedLog, parsedEvents);
+    timelineNeedsRender = false;
+  }
+
+  // Find the closest data point and show tooltip
+  if (chartInstance && chartInstance.data.labels) {
+    const labels = chartInstance.data.labels;
+    let closest = 0;
+    let minDist = Infinity;
+    for (let i = 0; i < labels.length; i++) {
+      const d = Math.abs(parseFloat(labels[i]) - time_s);
+      if (d < minDist) { minDist = d; closest = i; }
+    }
+    // Trigger hover on the closest point
+    const meta = chartInstance.getDatasetMeta(0);
+    if (meta && meta.data[closest]) {
+      chartInstance.setActiveElements([{ datasetIndex: 0, index: closest }]);
+      chartInstance.tooltip.setActiveElements([{ datasetIndex: 0, index: closest }], { x: meta.data[closest].x, y: meta.data[closest].y });
+      chartInstance.update();
+    }
+  }
+}
+
+// ==================== RENDER POWER DISTRIBUTION TAB ====================
+let powerChartInstance = null;
+
+function renderPower(logData) {
+  const records = logData.records;
+  const matchRecs = records.filter(r => r.mode === 'auto' || r.mode === 'teleop');
+
+  // Compute per-channel stats
+  const channelStats = [];
+  for (let ch = 0; ch < 16; ch++) {
+    const values = matchRecs.map(r => r.pdpChannels ? r.pdpChannels[ch] : 0).filter(v => v > 0);
+    const peak = values.length ? Math.max(...values) : 0;
+    const avg = values.length ? values.reduce((s,v) => s+v, 0) / values.length : 0;
+    const total = values.reduce((s,v) => s+v, 0) * 0.02; // amp-seconds
+    channelStats.push({ ch, peak, avg, total, hasData: peak > 0.5 });
+  }
+
+  // Top 3 consumers by peak current
+  const sorted = [...channelStats].filter(c => c.hasData).sort((a,b) => b.peak - a.peak);
+  const top3 = sorted.slice(0, 3);
+
+  document.getElementById('powerTopConsumers').innerHTML = `
+    <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;">Top Current Consumers</div>
+    <div class="top-consumers">
+      ${top3.map((c, i) => `
+        <div class="consumer-card" style="border-left-color: ${['var(--fire)','var(--yellow)','var(--blue)'][i]}">
+          <div class="ch-label">PDP Channel ${c.ch}</div>
+          <div class="ch-value" style="color:${['var(--fire)','var(--yellow)','var(--blue)'][i]}">${c.peak.toFixed(1)}A peak</div>
+          <div class="ch-sub">Avg: ${c.avg.toFixed(1)}A</div>
+        </div>
+      `).join('')}
+      ${top3.length === 0 ? '<div style="padding:20px;color:var(--text-muted);">No PDP/PDH data available in this log.</div>' : ''}
+    </div>
+  `;
+
+  // Stacked area chart of active channels
+  const step = Math.max(1, Math.floor(records.length / 1500));
+  const sampled = [];
+  for (let i = 0; i < records.length; i += step) sampled.push(records[i]);
+  const labels = sampled.map(r => r.time_s.toFixed(1));
+
+  const activeChannels = channelStats.filter(c => c.hasData).slice(0, 8); // Top 8 for readability
+  const chartColors = ['#C41E1E','#B8860B','#1E5FC4','#7C3AED','#059669','#D4453A','#FF6B35','#6366F1'];
+
+  const datasets = activeChannels.map((c, idx) => ({
+    label: 'Ch ' + c.ch,
+    data: sampled.map(r => r.pdpChannels ? r.pdpChannels[c.ch] : 0),
+    backgroundColor: chartColors[idx % chartColors.length] + '40',
+    borderColor: chartColors[idx % chartColors.length],
+    borderWidth: 1,
+    fill: true,
+    pointRadius: 0,
+    tension: 0.2
+  }));
+
+  // Add total current line
+  datasets.push({
+    label: 'Total',
+    data: sampled.map(r => r.totalCurrent || 0),
+    borderColor: '#1A1714',
+    borderWidth: 2,
+    borderDash: [5, 3],
+    fill: false,
+    pointRadius: 0,
+    tension: 0.2
+  });
+
+  if (powerChartInstance) powerChartInstance.destroy();
+  powerChartInstance = new Chart(document.getElementById('powerChart'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', labels: { font: { family: 'Outfit', size: 11 }, usePointStyle: true, pointStyle: 'line' } },
+        tooltip: { titleFont: { family: 'JetBrains Mono', size: 11 }, bodyFont: { family: 'JetBrains Mono', size: 10 } }
+      },
+      scales: {
+        x: { title: { display: true, text: 'Time (s)', font: { family: 'JetBrains Mono', size: 11 } }, ticks: { font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 20 } },
+        y: { title: { display: true, text: 'Current (A)', font: { family: 'JetBrains Mono', size: 11 } }, min: 0, ticks: { font: { family: 'JetBrains Mono', size: 10 } }, grid: { color: 'rgba(0,0,0,0.05)' } }
+      }
+    }
+  });
+}
+
+// ==================== RENDER PIT BRIEF TAB ====================
+function renderPitBrief(logData, eventData) {
+  const records = logData.records;
+  const events = eventData.events;
+  const matchRecs = records.filter(r => r.mode === 'auto' || r.mode === 'teleop');
+  const validV = matchRecs.filter(r => r.voltage !== null);
+
+  // ---- Electrical Health ----
+  const minV = validV.length ? Math.min(...validV.map(r => r.voltage)) : 0;
+  const brownouts = records.filter(r => r.brownout).length;
+  let elecScore = 100;
+  if (minV < 8) elecScore -= 50;
+  else if (minV < 10) elecScore -= 30;
+  else if (minV < 11) elecScore -= 15;
+  else if (minV < 12) elecScore -= 5;
+  if (brownouts > 0) elecScore -= 25;
+  if (brownouts > 10) elecScore -= 15;
+  const maxTC = matchRecs.length ? Math.max(...matchRecs.map(r => r.totalCurrent || 0)) : 0;
+  if (maxTC > 120) elecScore -= 10;
+  elecScore = Math.max(0, Math.min(100, elecScore));
+
+  // ---- Network Health ----
+  const maxLoss = matchRecs.length ? Math.max(...matchRecs.map(r => r.packetLoss)) : 0;
+  const avgTrip = matchRecs.length ? matchRecs.reduce((s,r) => s + r.tripTime, 0) / matchRecs.length : 0;
+  let modeFlips = 0;
+  for (let i = 1; i < records.length; i++) {
+    if (records[i].mode !== records[i-1].mode) modeFlips++;
+  }
+  const flickerRate = modeFlips / (records.length * 0.02 || 1);
+  let netScore = 100;
+  if (maxLoss > 10) netScore -= 25;
+  else if (maxLoss > 5) netScore -= 12;
+  else if (maxLoss > 2) netScore -= 5;
+  if (avgTrip > 50) netScore -= 20;
+  else if (avgTrip > 20) netScore -= 10;
+  if (flickerRate > 2) netScore -= 25;
+  else if (flickerRate > 0.5) netScore -= 10;
+  netScore = Math.max(0, Math.min(100, netScore));
+
+  // ---- Code Health ----
+  const loopOverruns = events.filter(e => e.text.includes('Loop time') || e.text.includes('taking too long'));
+  const codeStarts = events.filter(e => e.title === 'Robot Code Started');
+  const codeExceptions = events.filter(e => e.severity === 'critical' && e.category === 'Code');
+  const watchdogs = records.filter(r => r.watchdog);
+  const avgCpu = matchRecs.length ? matchRecs.reduce((s,r) => s + r.rioCpu * 100, 0) / matchRecs.length : 0;
+  let codeScore = 100;
+  if (codeExceptions.length > 0) codeScore -= 20;
+  if (codeStarts.length > 1) codeScore -= 15;
+  if (loopOverruns.length > 5) codeScore -= 15;
+  else if (loopOverruns.length > 0) codeScore -= 5;
+  if (watchdogs.length > 50) codeScore -= 15;
+  else if (watchdogs.length > 10) codeScore -= 8;
+  if (avgCpu > 85) codeScore -= 10;
+  codeScore = Math.max(0, Math.min(100, codeScore));
+
+  function scoreColor(s) { return s >= 75 ? 'green' : s >= 50 ? 'yellow' : 'red'; }
+  function scoreLabel(s) { return s >= 75 ? 'GOOD' : s >= 50 ? 'CHECK' : 'FIX'; }
+
+  document.getElementById('pitBriefContent').innerHTML = `
+    <div style="text-align:center;margin-bottom:24px;">
+      <div style="font-size:22px;font-weight:700;margin-bottom:4px;">Pit Brief</div>
+      <div style="font-size:14px;color:var(--text-secondary);">At-a-glance status for the pit crew</div>
+    </div>
+    <div class="pit-scores">
+      <div class="pit-score-card">
+        <div class="stoplight ${scoreColor(elecScore)}">${elecScore}</div>
+        <div class="pit-score-label">⚡ Electrical</div>
+        <div class="pit-score-detail">
+          Min voltage: ${minV.toFixed(1)}V<br>
+          Brownouts: ${brownouts}<br>
+          Peak current: ${maxTC.toFixed(0)}A
+        </div>
+      </div>
+      <div class="pit-score-card">
+        <div class="stoplight ${scoreColor(netScore)}">${netScore}</div>
+        <div class="pit-score-label">📡 Network</div>
+        <div class="pit-score-detail">
+          Peak packet loss: ${maxLoss.toFixed(1)}%<br>
+          Avg trip time: ${avgTrip.toFixed(1)}ms<br>
+          Comms flicker: ${flickerRate.toFixed(1)}/s
+        </div>
+      </div>
+      <div class="pit-score-card">
+        <div class="stoplight ${scoreColor(codeScore)}">${codeScore}</div>
+        <div class="pit-score-label">💻 Code</div>
+        <div class="pit-score-detail">
+          Exceptions: ${codeExceptions.length}<br>
+          Loop overruns: ${loopOverruns.length}<br>
+          Avg CPU: ${avgCpu.toFixed(0)}%
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 // ==================== FILE HANDLING ====================
 let loadedFiles = {};
 
@@ -2033,6 +2379,7 @@ document.body.addEventListener('dragover', (e) => e.preventDefault());
 document.body.addEventListener('drop', (e) => { e.preventDefault(); handleFiles(e.dataTransfer.files); });
 
 let timelineNeedsRender = false;
+let powerNeedsRender = false;
 
 // Tab switching
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -2041,15 +2388,20 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-    // Render timeline on first visit (Chart.js needs visible container)
+    // Render timeline on first visit
     if (btn.dataset.tab === 'timeline') {
       if (timelineNeedsRender && parsedLog && parsedEvents) {
-        setTimeout(() => {
-          renderTimeline(parsedLog, parsedEvents);
-          timelineNeedsRender = false;
-        }, 50);
+        setTimeout(() => { renderTimeline(parsedLog, parsedEvents); timelineNeedsRender = false; }, 50);
       } else if (chartInstance) {
         setTimeout(() => { chartInstance.resize(); if (modeChartInstance) modeChartInstance.resize(); }, 50);
+      }
+    }
+    // Render power chart on first visit
+    if (btn.dataset.tab === 'power') {
+      if (powerNeedsRender && parsedLog) {
+        setTimeout(() => { renderPower(parsedLog); powerNeedsRender = false; }, 50);
+      } else if (powerChartInstance) {
+        setTimeout(() => { powerChartInstance.resize(); }, 50);
       }
     }
   });
@@ -2067,6 +2419,7 @@ function resetDashboard() {
   document.querySelector('.drop-zone p').innerHTML = 'Drag & drop your <strong>.dslog</strong> and <strong>.dsevents</strong> files<br>or click to browse';
   if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
   if (modeChartInstance) { modeChartInstance.destroy(); modeChartInstance = null; }
+  if (powerChartInstance) { powerChartInstance.destroy(); powerChartInstance = null; }
 }
 </script>
 </body>
