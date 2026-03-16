@@ -762,12 +762,39 @@ function parseDSLog(buffer) {
     else if (robotTele) mode = 'teleop';
     else if (robotDisabled) mode = 'disabled';
 
+    // Parse PDP/PDH total current from remaining record bytes
+    // V4: bytes 10-13 are PDP header (byte 12 = type: 25=CTRE, 33=REV, 0=none)
+    // Then 10-bit packed currents for up to 24 channels
+    let totalCurrent = 0;
+    const pdpBase = offset + 10;
+    const pdpType = version === 4 ? view.getUint8(pdpBase + 2) : 0;
+    if (pdpType > 0) {
+      // Read the last 2 bytes of PDP block as total current estimate (voltage * rough current)
+      // For v4: simplified — sum first 16 channels from packed 10-bit values
+      const pdpDataStart = version === 4 ? pdpBase + 4 : pdpBase;
+      const pdpBytes = new Uint8Array(buffer, pdpDataStart, version === 4 ? 33 : 25);
+      // Extract 10-bit packed channel currents (6 per 64-bit block, 3 blocks = 18+ channels)
+      function get10bit(bytes, bitOffset) {
+        const byteIdx = Math.floor(bitOffset / 8);
+        const bitShift = bitOffset % 8;
+        if (byteIdx + 1 >= bytes.length) return 0;
+        const val = (bytes[byteIdx] << 8 | bytes[byteIdx + 1]) >> (6 - bitShift);
+        return (val & 0x3FF) / 8.0; // 10-bit, divide by 8 for amps
+      }
+      const channelBitOffsets = [8,18,28,38,48,58, 72,82,92,102,112,122, 136,146,156,166];
+      for (const bo of channelBitOffsets) {
+        if (Math.floor(bo/8) + 1 < pdpBytes.length) {
+          totalCurrent += get10bit(pdpBytes, bo);
+        }
+      }
+    }
+
     records.push({
       time_s: i * 0.020,
       timestamp: new Date(startTime.getTime() + i * 20),
       tripTime, packetLoss, voltage, rioCpu, canUsage, wifiDb, bandwidth,
       robotDisabled, robotAuto, robotTele, dsDisabled, dsAuto, dsTele,
-      watchdog, brownout, mode
+      watchdog, brownout, mode, totalCurrent
     });
   }
 
@@ -1171,6 +1198,156 @@ function runDiagnostics(logData, eventData) {
     });
   }
 
+
+  // ---- RULE 19: Radio Power Cycle Detected ----
+  const pingEvents = events.filter(e => e.text.includes('Ping Results'));
+  let radioPowerCycle = false;
+  for (let i = 1; i < pingEvents.length; i++) {
+    const prev = pingEvents[i-1].text;
+    const curr = pingEvents[i].text;
+    if (prev.includes('robot radio(.1)-bad') && curr.includes('robot radio(.1)-GOOD') &&
+        prev.includes('FMS-GOOD') && curr.includes('FMS-GOOD')) {
+      radioPowerCycle = true;
+      break;
+    }
+  }
+  if (radioPowerCycle) {
+    diagnostics.fixNow.push({
+      title: '📡 Radio Power Cycle Detected',
+      body: 'The robot radio dropped and recovered while FMS stayed connected. This means the radio lost power momentarily — a critical wiring issue that can cause random disconnects mid-match.',
+      evidence: 'Ping status transitioned: robot radio bad → GOOD while FMS remained GOOD',
+      action: 'Check radio power wiring. Ensure you are using a REV Radio Power Module or dedicated VRM. Verify barrel jack connection is secure and not intermittent.'
+    });
+  }
+
+  // ---- RULE 20: PDP/PDH Sticky Faults ----
+  const stickyFaults = events.filter(e =>
+    e.text.toLowerCase().includes('sticky fault') ||
+    e.text.toLowerCase().includes('hardware fault')
+  );
+  if (stickyFaults.length > 0) {
+    diagnostics.fixNow.push({
+      title: '⚡ PDP/PDH Sticky Faults Detected',
+      body: `${stickyFaults.length} sticky or hardware fault(s) detected on the Power Distribution Hub. These indicate transient overcurrent events or hardware issues.`,
+      evidence: stickyFaults.slice(0, 2).map(e => e.text.substring(0, 120)).join('\n'),
+      action: 'Check for transient shorts in wiring. Clear sticky faults in Phoenix Tuner X / REV Hardware Client. Inspect breakers and connections.'
+    });
+  }
+
+  // ---- RULE 21: Total Current Spike (Trip Hazard) ----
+  let currentSpikeCount = 0;
+  let maxTotalCurrent = 0;
+  let spikeStart = -1;
+  for (let i = 0; i < matchRecords.length; i++) {
+    const tc = matchRecords[i].totalCurrent || 0;
+    if (tc > maxTotalCurrent) maxTotalCurrent = tc;
+    if (tc > 120) {
+      if (spikeStart < 0) spikeStart = i;
+      if ((i - spikeStart) * 0.02 > 2.0) { currentSpikeCount++; spikeStart = -1; }
+    } else {
+      spikeStart = -1;
+    }
+  }
+  if (currentSpikeCount > 0) {
+    diagnostics.fixNow.push({
+      title: '🔌 Total Current Spike — Main Breaker Trip Hazard',
+      body: `Total current exceeded 120A for more than 2 seconds on ${currentSpikeCount} occasion(s). The 120A main breaker will trip if sustained, causing total robot shutdown.`,
+      evidence: `Peak total current: ${maxTotalCurrent.toFixed(1)}A | Sustained spikes (>2s): ${currentSpikeCount}`,
+      action: 'Investigate drivetrain gear ratios or stalled mechanisms. Implement software current limiting on high-draw motors. Check for motors fighting each other.'
+    });
+  }
+
+  // ---- RULE 22: Battery Internal Resistance (Weak Battery) ----
+  let weakBatteryDetected = false;
+  for (let i = 10; i < matchRecords.length; i++) {
+    const v1 = matchRecords[i-10].voltage;
+    const v2 = matchRecords[i].voltage;
+    const c1 = matchRecords[i-10].totalCurrent || 0;
+    const c2 = matchRecords[i].totalCurrent || 0;
+    if (v1 !== null && v2 !== null && Math.abs(c2 - c1) > 5) {
+      const resistance = Math.abs(v2 - v1) / Math.abs(c2 - c1);
+      if (resistance > 0.035) {
+        // Check if sustained for > 0.5s (25 records)
+        let sustained = true;
+        for (let j = i; j < Math.min(i + 25, matchRecords.length); j++) {
+          const vj = matchRecords[j].voltage;
+          const cj = matchRecords[j].totalCurrent || 0;
+          if (vj === null || Math.abs(cj - c1) < 5) { sustained = false; break; }
+          const rj = Math.abs(vj - v1) / Math.abs(cj - c1);
+          if (rj <= 0.035) { sustained = false; break; }
+        }
+        if (sustained) { weakBatteryDetected = true; break; }
+      }
+    }
+  }
+  if (weakBatteryDetected) {
+    diagnostics.investigate.push({
+      title: '🔋 High Battery Internal Resistance (Weak Battery)',
+      body: 'The ratio of voltage drop to current change (ΔV/ΔI) exceeded 0.035 Ω for more than 0.5s. A healthy battery should have internal resistance below 0.015 Ω. This battery is likely degraded.',
+      evidence: 'ΔV/ΔI > 0.035 Ω sustained during match load',
+      action: 'Retire this battery from match play. Label as "Practice Only." Run a battery load test with a Battery Beak to confirm.'
+    });
+  }
+
+  // ---- RULE 23: Code Loop Overrun ----
+  const loopOverrunRegex = /Loop time of ([\d.]+)s exceeded/;
+  const overrunEvents = events.filter(e => loopOverrunRegex.test(e.text) || e.text.includes('Periodic is taking too long'));
+  if (overrunEvents.length > 0) {
+    const overrunTimes = overrunEvents.map(e => {
+      const m = e.text.match(loopOverrunRegex);
+      return m ? parseFloat(m[1]) : 0;
+    }).filter(t => t > 0);
+    const worstOverrun = overrunTimes.length ? Math.max(...overrunTimes) : 0;
+    diagnostics.investigate.push({
+      title: '⏱️ Code Loop Overrun Detected',
+      body: `${overrunEvents.length} loop overrun(s) detected.${worstOverrun > 0 ? ` Worst overrun: ${worstOverrun.toFixed(3)}s (limit: 0.020s).` : ''} The robot code is taking too long in its periodic loop, causing delayed sensor reads and motor updates.`,
+      evidence: overrunEvents.slice(0, 2).map(e => e.text.substring(0, 120)).join('\n'),
+      action: 'Optimize code in teleopPeriodic or robotPeriodic. Check for blocking Thread.sleep calls, heavy logging, or slow sensor reads. Move expensive operations to separate threads.'
+    });
+  }
+
+  // ---- RULE 24: High CPU Utilization ----
+  const matchCpuValues = matchRecords.map(r => r.rioCpu * 100);
+  const avgCpu = matchCpuValues.length ? matchCpuValues.reduce((s,v) => s+v, 0) / matchCpuValues.length : 0;
+  const maxCpu = matchCpuValues.length ? Math.max(...matchCpuValues) : 0;
+  if (avgCpu > 85 || maxCpu > 95) {
+    diagnostics.investigate.push({
+      title: '🖥️ High roboRIO CPU Utilization',
+      body: `${avgCpu > 85 ? `Average CPU usage was ${avgCpu.toFixed(0)}% (threshold: 85%).` : ''} ${maxCpu > 95 ? `Peak CPU hit ${maxCpu.toFixed(0)}% (threshold: 95%).` : ''} High CPU can cause loop overruns, delayed CAN communications, and erratic behavior.`,
+      evidence: `Avg CPU: ${avgCpu.toFixed(1)}% | Peak: ${maxCpu.toFixed(1)}%`,
+      action: 'Check for background processes, high-frequency NetworkTables telemetry, or vision processing overhead on the roboRIO. Reduce logging frequency.'
+    });
+  }
+
+  // ---- RULE 25: Stale CAN Data ----
+  const staleCan = events.filter(e => {
+    const l = e.text.toLowerCase();
+    return l.includes('message not found') || l.includes('stale') || l.includes('rx too old');
+  });
+  if (staleCan.length > 0) {
+    diagnostics.investigate.push({
+      title: '📡 Stale CAN Data Detected',
+      body: `${staleCan.length} stale CAN data event(s). Devices on the CAN bus are sending outdated or missing frames, which means sensors or motor controllers are reporting old values.`,
+      evidence: staleCan.slice(0, 2).map(e => e.text.substring(0, 120)).join('\n'),
+      action: 'Check CAN bus termination resistor. Ensure all device IDs are unique. Update firmware on all CAN devices to consistent versions.'
+    });
+  }
+
+  // ---- RULE 26: Radio Latency Spikes ----
+  const highLatencyRecs = matchRecords.filter(r => r.tripTime > 50);
+  const highLatencyNotDisconnect = highLatencyRecs.filter(r => r.mode !== 'disconnected');
+  if (highLatencyNotDisconnect.length > 50) { // More than 1 second of high latency
+    const avgTrip = matchRecords.reduce((s,r) => s + r.tripTime, 0) / (matchRecords.length || 1);
+    const maxTrip = Math.max(...matchRecords.map(r => r.tripTime));
+    diagnostics.investigate.push({
+      title: '📶 Radio Latency Spikes',
+      body: `Trip time exceeded 50ms on ${highLatencyNotDisconnect.length} records (${(highLatencyNotDisconnect.length * 0.02).toFixed(1)}s total) without full disconnect. High latency causes delayed joystick inputs and sluggish robot response.`,
+      evidence: `Avg trip time: ${avgTrip.toFixed(1)}ms | Peak: ${maxTrip.toFixed(1)}ms | High-latency records: ${highLatencyNotDisconnect.length}`,
+      action: 'Check for high-bandwidth camera streams. Reduce MJPEG resolution and FPS. Ensure radio antennas are unobstructed by metal.'
+    });
+  }
+
+
   // ---- MONITORING / GREEN ITEMS ----
   if (minVoltage >= 11.5 && brownouts.length === 0) {
     diagnostics.monitor.push({
@@ -1196,7 +1373,39 @@ function runDiagnostics(logData, eventData) {
     });
   }
 
-  return diagnostics;
+
+  // ---- GREEN: Power System Efficiency ----
+  const maxVoltageSag = validVoltages.length >= 2 ? Math.max(...validVoltages.map(r => r.voltage)) - Math.min(...validVoltages.map(r => r.voltage)) : 0;
+  const avgTotalCurrent = matchRecords.length ? matchRecords.reduce((s,r) => s + (r.totalCurrent || 0), 0) / matchRecords.length : 0;
+  if (avgTotalCurrent < 40 && maxVoltageSag < 2.0 && matchRecords.length > 0) {
+    diagnostics.monitor.push({
+      title: '✅ Power System Efficient',
+      body: `Average current draw was ${avgTotalCurrent.toFixed(1)}A with voltage sag under 2.0V. Power system is operating efficiently.`,
+      evidence: `Avg current: ${avgTotalCurrent.toFixed(1)}A | Max voltage sag: ${maxVoltageSag.toFixed(2)}V`
+    });
+  }
+
+  // ---- GREEN: Processor Headroom ----
+  if (maxCpu < 60 && matchRecords.length > 0) {
+    diagnostics.monitor.push({
+      title: '✅ Processor Headroom Good',
+      body: `Peak CPU usage stayed below 60% (${maxCpu.toFixed(0)}%). Plenty of headroom for additional processing.`,
+      evidence: `Peak CPU: ${maxCpu.toFixed(1)}% | Avg: ${avgCpu.toFixed(1)}%`
+    });
+  }
+
+  // ---- GREEN: Radio Link Quality ----
+  const avgTripTime = matchRecords.length ? matchRecords.reduce((s,r) => s + r.tripTime, 0) / matchRecords.length : 999;
+  const highLossRecords = matchRecords.filter(r => r.packetLoss > 1.0);
+  if (avgTripTime < 10 && highLossRecords.length === 0 && matchRecords.length > 0) {
+    diagnostics.monitor.push({
+      title: '✅ Radio Link Quality Excellent',
+      body: `Average trip time was ${avgTripTime.toFixed(1)}ms with zero packet loss events above 1%. Network performance is excellent.`,
+      evidence: `Avg trip: ${avgTripTime.toFixed(1)}ms | High-loss events: 0`
+    });
+  }
+
+    return diagnostics;
 }
 
 // ==================== RENDER FUNCTIONS ====================
@@ -1773,18 +1982,27 @@ function handleFiles(files) {
   }
 
   if (loadedFiles.dslog && loadedFiles.dsevents) {
+    // Show loading state
+    document.querySelector('.drop-zone h2').textContent = 'Parsing logs...';
+    document.querySelector('.drop-zone p').innerHTML = 'Processing telemetry and events data';
+
     Promise.all([
       loadedFiles.dslog.arrayBuffer(),
       loadedFiles.dsevents.arrayBuffer()
     ]).then(([logBuf, evBuf]) => {
-      try {
-        const logData = parseDSLog(logBuf);
-        const eventData = parseDSEvents(evBuf);
-        renderDashboard(logData, eventData);
-      } catch (err) {
-        alert('Error parsing log files: ' + err.message);
-        console.error(err);
-      }
+      // Use a small timeout to let the UI update with loading message
+      setTimeout(() => {
+        try {
+          const logData = parseDSLog(logBuf);
+          const eventData = parseDSEvents(evBuf);
+          renderDashboard(logData, eventData);
+        } catch (err) {
+          alert('Error parsing log files: ' + err.message);
+          console.error(err);
+          document.querySelector('.drop-zone h2').textContent = 'Drop Robot Logs Here';
+          document.querySelector('.drop-zone p').innerHTML = 'Drag & drop your <strong>.dslog</strong> and <strong>.dsevents</strong> files<br>or click to browse';
+        }
+      }, 50);
     });
   } else if (loadedFiles.dslog || loadedFiles.dsevents) {
     // Only one file loaded so far
