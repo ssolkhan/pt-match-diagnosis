@@ -775,7 +775,6 @@ body {
     <button class="tab-btn" data-tab="power">⚡ Power</button>
     <button class="tab-btn" data-tab="errors">⚠️ Errors & Warnings</button>
     <button class="tab-btn" data-tab="diagnostics">🩺 Insights</button>
-    <button class="tab-btn" data-tab="pitbrief">🚦 Pit Brief</button>
   </div>
 
   <!-- TAB: Match Summary -->
@@ -815,10 +814,7 @@ body {
     <div id="diagnosticsContent"></div>
   </div>
 
-  <!-- TAB: Pit Brief -->
-  <div class="tab-panel" id="tab-pitbrief">
-    <div id="pitBriefContent"></div>
-  </div>
+
 
 </div>
 
@@ -1098,18 +1094,22 @@ function runDiagnostics(logData, eventData) {
 
   // ---- RULE 1: Severe voltage drops ----
   if (minVoltage < 8.0) {
+    const minVTime = validVoltages.reduce((best, r) => r.voltage < best.voltage ? r : best, validVoltages[0]);
     diagnostics.fixNow.push({
       title: '🔋 Critical Voltage Collapse',
       body: `Battery voltage dropped to ${minVoltage.toFixed(1)}V during the match. Below 8V the roboRIO will brown out and reboot, causing total loss of control. This is extremely dangerous.`,
-      evidence: `Min voltage: ${minVoltage.toFixed(2)}V | Crashes below 10V: ${voltageCrashes.length} events | Below-10V duration: ${below10Duration.toFixed(1)}s`,
-      action: 'SWAP BATTERY immediately. Check for stalled motors, shorted wiring, or mechanism jams drawing excessive current.'
+      evidence: `Min voltage: ${minVoltage.toFixed(2)}V at ${minVTime.time_s.toFixed(1)}s | Crashes below 10V: ${voltageCrashes.length} events | Below-10V duration: ${below10Duration.toFixed(1)}s`,
+      action: 'SWAP BATTERY immediately. Check for stalled motors, shorted wiring, or mechanism jams drawing excessive current.',
+      time_s: minVTime.time_s
     });
   } else if (minVoltage < 10.0) {
+    const minVTime2 = validVoltages.reduce((best, r) => r.voltage < best.voltage ? r : best, validVoltages[0]);
     diagnostics.fixNow.push({
       title: '🔋 Severe Voltage Drops',
       body: `Battery voltage dropped to ${minVoltage.toFixed(1)}V during the match. Voltages below 10V cause erratic motor behavior, CAN communication failures, and brownout risk.`,
-      evidence: `Min voltage: ${minVoltage.toFixed(2)}V | Avg: ${avgVoltage.toFixed(2)}V | Crashes: ${voltageCrashes.length} | Below-10V: ${below10Duration.toFixed(1)}s`,
-      action: 'SWAP BATTERY. Investigate current draw — check for stalled motors, binding mechanisms, or short circuits in the wiring harness.'
+      evidence: `Min voltage: ${minVoltage.toFixed(2)}V at ${minVTime2.time_s.toFixed(1)}s | Avg: ${avgVoltage.toFixed(2)}V | Crashes: ${voltageCrashes.length} | Below-10V: ${below10Duration.toFixed(1)}s`,
+      action: 'SWAP BATTERY. Investigate current draw — check for stalled motors, binding mechanisms, or short circuits in the wiring harness.',
+      time_s: minVTime2.time_s
     });
   } else if (minVoltage < 11.0) {
     diagnostics.investigate.push({
@@ -1146,6 +1146,7 @@ function runDiagnostics(logData, eventData) {
   // ---- RULE 4: CAN timeouts ----
   if (canTimeouts.length > 0) {
     diagnostics.fixNow.push({
+      time_s: canTimeouts[0]?.time_s || 0,
       title: '🚨 CAN Bus Timeouts',
       body: `${canTimeouts.length} CAN device(s) timed out during initialization or operation. Devices on the CAN bus are not responding, which means motors or sensors connected to them will not work.`,
       evidence: canTimeouts.slice(0, 3).map(e => e.text.substring(0, 100)).join('\n'),
@@ -1166,6 +1167,7 @@ function runDiagnostics(logData, eventData) {
   // ---- RULE 6: Comms instability / flicker ----
   if (commsFlickerRate > 2.0) {
     diagnostics.fixNow.push({
+      time_s: records.find(r => r.mode === 'disconnected' && r.voltage !== null)?.time_s || 0,
       title: '📡 Severe Communications Instability',
       body: `Robot connection was flickering at ${commsFlickerRate.toFixed(1)} mode changes/second. The DS and robot are rapidly connecting/disconnecting, which causes intermittent loss of control.`,
       evidence: `Mode transitions: ${modeFlips} over ${totalDuration.toFixed(0)}s | Rate: ${commsFlickerRate.toFixed(1)}/s`,
@@ -1317,24 +1319,35 @@ function runDiagnostics(logData, eventData) {
   }
 
 
-  // ---- RULE 19: Radio Power Cycle Detected ----
+  // ---- RULE 19: Radio Power Cycle Detected (with Code Start correlation) ----
   const pingEvents = events.filter(e => e.text.includes('Ping Results'));
-  let radioPowerCycle = false;
+  let radioPowerCycleTime = null;
   for (let i = 1; i < pingEvents.length; i++) {
     const prev = pingEvents[i-1].text;
     const curr = pingEvents[i].text;
     if (prev.includes('robot radio(.1)-bad') && curr.includes('robot radio(.1)-GOOD') &&
         prev.includes('FMS-GOOD') && curr.includes('FMS-GOOD')) {
-      radioPowerCycle = true;
+      radioPowerCycleTime = pingEvents[i].time_s;
       break;
     }
   }
-  if (radioPowerCycle) {
+  // Also check: radio-bad followed by Code Start (indicates full radio reboot)
+  if (!radioPowerCycleTime) {
+    for (let i = 0; i < pingEvents.length; i++) {
+      if (pingEvents[i].text.includes('robot radio(.1)-bad')) {
+        const radioDownTime = pingEvents[i].time_s;
+        const codeStartAfter = codeStarts.find(cs => cs.time_s > radioDownTime && cs.time_s < radioDownTime + 30);
+        if (codeStartAfter) { radioPowerCycleTime = radioDownTime; break; }
+      }
+    }
+  }
+  if (radioPowerCycleTime !== null) {
     diagnostics.fixNow.push({
-      title: '📡 Radio Power Cycle Detected',
-      body: 'The robot radio dropped and recovered while FMS stayed connected. This means the radio lost power momentarily — a critical wiring issue that can cause random disconnects mid-match.',
-      evidence: 'Ping status transitioned: robot radio bad → GOOD while FMS remained GOOD',
-      action: 'Check radio power wiring. Ensure you are using a REV Radio Power Module or dedicated VRM. Verify barrel jack connection is secure and not intermittent.'
+      time_s: radioPowerCycleTime,
+      title: '📡 Radio Reboot Detected',
+      body: 'The robot radio dropped and recovered (or triggered a code restart). This means the radio lost power momentarily — a critical wiring issue that causes multi-second disconnects mid-match.',
+      evidence: `Radio power cycle at ~${radioPowerCycleTime.toFixed(1)}s | Correlated with code restart: ${codeStarts.length > 1 ? 'YES' : 'no'}`,
+      action: 'Check VRM/RPM wiring immediately. Ensure you are using a REV Radio Power Module. Verify barrel jack is secure and not intermittent under vibration.'
     });
   }
 
@@ -1375,52 +1388,62 @@ function runDiagnostics(logData, eventData) {
     });
   }
 
-  // ---- RULE 22: Battery Internal Resistance (Weak Battery) ----
-  let weakBatteryDetected = false;
+  // ---- RULE 22: Predictive Battery Health (Internal Resistance) ----
+  // Monitor high-acceleration events (current increase >40A in <200ms = 10 records)
+  let worstResistance = 0;
+  let worstResTime = 0;
+  let highResCount = 0;
   for (let i = 10; i < matchRecords.length; i++) {
     const v1 = matchRecords[i-10].voltage;
     const v2 = matchRecords[i].voltage;
     const c1 = matchRecords[i-10].totalCurrent || 0;
     const c2 = matchRecords[i].totalCurrent || 0;
-    if (v1 !== null && v2 !== null && Math.abs(c2 - c1) > 5) {
-      const resistance = Math.abs(v2 - v1) / Math.abs(c2 - c1);
-      if (resistance > 0.035) {
-        // Check if sustained for > 0.5s (25 records)
-        let sustained = true;
-        for (let j = i; j < Math.min(i + 25, matchRecords.length); j++) {
-          const vj = matchRecords[j].voltage;
-          const cj = matchRecords[j].totalCurrent || 0;
-          if (vj === null || Math.abs(cj - c1) < 5) { sustained = false; break; }
-          const rj = Math.abs(vj - v1) / Math.abs(cj - c1);
-          if (rj <= 0.035) { sustained = false; break; }
-        }
-        if (sustained) { weakBatteryDetected = true; break; }
-      }
+    const deltaI = c2 - c1;
+    // Look for high-acceleration events: current increase >40A in 200ms
+    if (v1 !== null && v2 !== null && deltaI > 40) {
+      const deltaV = Math.abs(v1 - v2);
+      const R = deltaV / deltaI;
+      if (R > worstResistance) { worstResistance = R; worstResTime = matchRecords[i].time_s; }
+      if (R > 0.025) highResCount++;
     }
   }
-  if (weakBatteryDetected) {
+  if (highResCount > 5 && worstResistance > 0.025) {
     diagnostics.investigate.push({
-      title: '🔋 High Battery Internal Resistance (Weak Battery)',
-      body: 'The ratio of voltage drop to current change (ΔV/ΔI) exceeded 0.035 Ω for more than 0.5s. A healthy battery should have internal resistance below 0.015 Ω. This battery is likely degraded.',
-      evidence: 'ΔV/ΔI > 0.035 Ω sustained during match load',
-      action: 'Retire this battery from match play. Label as "Practice Only." Run a battery load test with a Battery Beak to confirm.'
+      time_s: worstResTime,
+      title: '🔋 High Battery Internal Resistance',
+      body: `During ${highResCount} high-acceleration events (ΔI > 40A), the battery showed internal resistance of up to ${(worstResistance * 1000).toFixed(1)}mΩ (threshold: 25mΩ). A healthy FRC battery should be under 15mΩ. This battery is at risk of brownout under heavy load.`,
+      evidence: `Worst R: ${(worstResistance * 1000).toFixed(1)}mΩ at ${worstResTime.toFixed(1)}s | High-R events: ${highResCount}`,
+      action: 'Retire this battery from match play. Label as "Practice Only." Run a load test with a Battery Beak to confirm. A healthy battery reads <15mΩ.'
+    });
+  } else if (worstResistance > 0 && worstResistance <= 0.015 && matchRecords.length > 0) {
+    diagnostics.monitor.push({
+      title: '✅ Battery Resistance Healthy',
+      body: `Measured internal resistance up to ${(worstResistance * 1000).toFixed(1)}mΩ during acceleration events. Well within the healthy range (<15mΩ).`,
+      evidence: `Best measured R: ${(worstResistance * 1000).toFixed(1)}mΩ`
     });
   }
 
   // ---- RULE 23: Code Loop Overrun ----
   const loopOverrunRegex = /Loop time of ([\d.]+)s exceeded/;
   const overrunEvents = events.filter(e => loopOverrunRegex.test(e.text) || e.text.includes('Periodic is taking too long'));
-  if (overrunEvents.length > 0) {
+  // Filter to severe overruns (>0.04s = double the 20ms standard)
+  const severeOverruns = overrunEvents.filter(e => {
+    const m = e.text.match(loopOverrunRegex);
+    return m ? parseFloat(m[1]) > 0.04 : true;
+  });
+  if (severeOverruns.length > 0) {
     const overrunTimes = overrunEvents.map(e => {
       const m = e.text.match(loopOverrunRegex);
       return m ? parseFloat(m[1]) : 0;
     }).filter(t => t > 0);
     const worstOverrun = overrunTimes.length ? Math.max(...overrunTimes) : 0;
-    diagnostics.investigate.push({
-      title: '⏱️ Code Loop Overrun Detected',
-      body: `${overrunEvents.length} loop overrun(s) detected.${worstOverrun > 0 ? ` Worst overrun: ${worstOverrun.toFixed(3)}s (limit: 0.020s).` : ''} The robot code is taking too long in its periodic loop, causing delayed sensor reads and motor updates.`,
-      evidence: overrunEvents.slice(0, 2).map(e => e.text.substring(0, 120)).join('\n'),
-      action: 'Optimize code in teleopPeriodic or robotPeriodic. Check for blocking Thread.sleep calls, heavy logging, or slow sensor reads. Move expensive operations to separate threads.'
+    const severity = worstOverrun > 0.1 ? 'fixNow' : 'investigate';
+    diagnostics[severity].push({
+      time_s: severeOverruns[0]?.time_s || 0,
+      title: '⏱️ Code Loop Overrun' + (worstOverrun > 0.1 ? ' — SEVERE' : ''),
+      body: `${overrunEvents.length} total overrun(s), ${severeOverruns.length} severe (>40ms).${worstOverrun > 0 ? ` Worst: ${(worstOverrun * 1000).toFixed(0)}ms (${(worstOverrun / 0.02).toFixed(0)}× the 20ms limit).` : ''} Motor outputs and sensor reads are delayed by this amount every cycle.`,
+      evidence: severeOverruns.slice(0, 2).map(e => e.text.substring(0, 120)).join('\n'),
+      action: 'Optimize code in teleopPeriodic/robotPeriodic. Check for blocking Thread.sleep calls, heavy logging, slow sensor reads. Move vision processing or path planning to separate threads.'
     });
   }
 
@@ -1437,17 +1460,35 @@ function runDiagnostics(logData, eventData) {
     });
   }
 
-  // ---- RULE 25: Stale CAN Data ----
+  // ---- RULE 25: Stale CAN Data (frequency-aware) ----
+  const staleCanRegex = /CAN: Message ([\d]+) not found/;
   const staleCan = events.filter(e => {
     const l = e.text.toLowerCase();
     return l.includes('message not found') || l.includes('stale') || l.includes('rx too old');
   });
-  if (staleCan.length > 0) {
+  // Check for burst: >3 occurrences within 1 second windows
+  let staleBursts = 0;
+  if (staleCan.length > 3) {
+    for (let i = 0; i < staleCan.length - 3; i++) {
+      const window = staleCan.filter(e => e.time_s >= staleCan[i].time_s && e.time_s < staleCan[i].time_s + 1.0);
+      if (window.length > 3) { staleBursts++; i += window.length - 1; }
+    }
+  }
+  if (staleBursts > 0 || staleCan.length > 10) {
     diagnostics.investigate.push({
-      title: '📡 Stale CAN Data Detected',
-      body: `${staleCan.length} stale CAN data event(s). Devices on the CAN bus are sending outdated or missing frames, which means sensors or motor controllers are reporting old values.`,
+      time_s: staleCan[0]?.time_s || 0,
+      title: '📡 Stale CAN Data — Burst Detected',
+      body: `${staleCan.length} stale CAN events with ${staleBursts} burst(s) of >3 events/second. This means CAN devices are intermittently failing to communicate, causing motors to use stale commands.`,
       evidence: staleCan.slice(0, 2).map(e => e.text.substring(0, 120)).join('\n'),
-      action: 'Check CAN bus termination resistor. Ensure all device IDs are unique. Update firmware on all CAN devices to consistent versions.'
+      action: 'Check CAN bus termination resistor and wiring. Ensure device IDs are unique. Update all CAN device firmware to consistent versions. Look for loose CAN connectors.'
+    });
+  } else if (staleCan.length > 0) {
+    diagnostics.investigate.push({
+      time_s: staleCan[0]?.time_s || 0,
+      title: '📡 Stale CAN Data',
+      body: `${staleCan.length} stale CAN data event(s). Isolated occurrences — monitor for increase.`,
+      evidence: staleCan.slice(0, 2).map(e => e.text.substring(0, 120)).join('\n'),
+      action: 'Check CAN bus termination and device firmware versions.'
     });
   }
 
@@ -1465,6 +1506,67 @@ function runDiagnostics(logData, eventData) {
     });
   }
 
+
+
+  // ---- RULE 27: Input-Induced Brownout (Driver Correlation) ----
+  // Check if voltage collapses correlate with the start of teleop (aggressive driving)
+  if (voltageCrashes.length > 0 && teleopRecords.length > 0) {
+    const teleopStart = teleopRecords[0].time_s;
+    const earlyTeleopCrashes = voltageCrashes.filter(vc => vc.time >= teleopStart && vc.time <= teleopStart + 10);
+    if (earlyTeleopCrashes.length > 0) {
+      diagnostics.investigate.push({
+        time_s: earlyTeleopCrashes[0].time,
+        title: '🎮 Brownout Triggered by Aggressive Driving',
+        body: `${earlyTeleopCrashes.length} voltage crash(es) occurred within the first 10 seconds of teleop. This strongly suggests the driver applied full throttle immediately, causing a current spike that overwhelmed the battery.`,
+        evidence: `Crash at ${earlyTeleopCrashes[0].time.toFixed(1)}s: ${earlyTeleopCrashes[0].from.toFixed(1)}V → ${earlyTeleopCrashes[0].to.toFixed(1)}V | Teleop started: ${teleopStart.toFixed(1)}s`,
+        action: 'Increase the drivetrain Ramp Rate in code (slew rate limiter). This softens acceleration to prevent current spikes. Also consider reducing max drivetrain current limits.'
+      });
+    }
+  }
+
+  // ---- RULE 28: Stationary Packet Loss (RF Interference) ----
+  // If packet loss is high but robot isn't moving (no mode activity), it's environmental
+  const disabledHighLoss = records.filter(r =>
+    r.mode === 'disabled' && r.packetLoss > 5 && r.voltage !== null
+  );
+  if (disabledHighLoss.length > 25) { // >0.5s of high loss while disabled
+    diagnostics.investigate.push({
+      time_s: disabledHighLoss[0].time_s,
+      title: '📶 Network Instability While Stationary',
+      body: `Packet loss exceeded 5% for ${(disabledHighLoss.length * 0.02).toFixed(1)}s while the robot was disabled/stationary. Since no motors were running, this indicates an environmental RF issue, not a robot-induced problem.`,
+      evidence: `High-loss records while disabled: ${disabledHighLoss.length} (${(disabledHighLoss.length * 0.02).toFixed(1)}s) | Peak loss: ${Math.max(...disabledHighLoss.map(r => r.packetLoss)).toFixed(1)}%`,
+      action: 'Likely RF interference or loose radio power cable. Check radio barrel jack, Ethernet connections, and antenna placement. Note your field position — some spots have worse interference.'
+    });
+  }
+
+  // ---- RULE 29: Subsystem Power Attribution (Command-based) ----
+  // Scan events for command lifecycle strings to identify active subsystems during spikes
+  const commandEvents = events.filter(e =>
+    e.text.toLowerCase().includes('command:') ||
+    e.text.toLowerCase().includes('command init') ||
+    e.text.toLowerCase().includes('starting command')
+  );
+  if (commandEvents.length > 0 && voltageCrashes.length > 0) {
+    for (const crash of voltageCrashes.slice(0, 3)) {
+      const nearbyCommands = commandEvents.filter(ce =>
+        Math.abs(ce.time_s - crash.time) < 2.0
+      );
+      if (nearbyCommands.length > 0) {
+        const cmdNames = nearbyCommands.map(c => {
+          const m = c.text.match(/[Cc]ommand[: ]+([\w]+)/);
+          return m ? m[1] : c.text.substring(0, 40);
+        });
+        diagnostics.investigate.push({
+          time_s: crash.time,
+          title: '⚡ Power Spike Correlated with Command: ' + cmdNames[0],
+          body: `A voltage crash (${crash.from.toFixed(1)}V → ${crash.to.toFixed(1)}V) occurred while command "${cmdNames[0]}" was active. This command's mechanism is likely the cause of the overcurrent.`,
+          evidence: `Crash at ${crash.time.toFixed(1)}s | Active commands: ${cmdNames.join(', ')}`,
+          action: 'Add current limiting to the motors controlled by this command. Check the mechanism for binding or stalling.'
+        });
+        break; // Only report the first correlated one
+      }
+    }
+  }
 
   // ---- MONITORING / GREEN ITEMS ----
   if (minVoltage >= 11.5 && brownouts.length === 0) {
@@ -1560,7 +1662,6 @@ function renderDashboard(logData, eventData) {
   renderSummary(logData, eventData);
   renderErrors(eventData);
   renderDiagnostics(logData, eventData);
-  renderPitBrief(logData, eventData);
   // Timeline and Power charts deferred until tab is first shown (Chart.js needs visible container)
   timelineNeedsRender = true;
   powerNeedsRender = true;
@@ -1867,6 +1968,31 @@ function renderTimeline(logData, eventData) {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
+      onHover: (event, elements) => {
+        if (elements.length > 0 && parsedEvents) {
+          const idx = elements[0].index;
+          const t = sampled[idx].time_s;
+          // Auto-scroll error list if errors tab has been rendered
+          const errorItems = document.querySelectorAll('.error-item');
+          let closestItem = null;
+          let closestDist = Infinity;
+          errorItems.forEach(item => {
+            const timeEl = item.querySelector('.error-time');
+            if (timeEl) {
+              const itemTime = parseFloat(timeEl.textContent);
+              if (!isNaN(itemTime) && Math.abs(itemTime - t) < closestDist) {
+                closestDist = Math.abs(itemTime - t);
+                closestItem = item;
+              }
+            }
+          });
+          // Highlight closest error
+          errorItems.forEach(item => item.classList.remove('highlighted'));
+          if (closestItem && closestDist < 5) {
+            closestItem.classList.add('highlighted');
+          }
+        }
+      },
       plugins: {
         legend: { position: 'top', labels: { font: { family: 'Outfit', size: 12 }, usePointStyle: true, pointStyle: 'line' } },
         tooltip: {
@@ -2057,7 +2183,7 @@ function renderDiagnostics(logData, eventData) {
     html += `<div class="diag-section-title">🔴 Fix Before Next Match</div>`;
     html += `<div class="action-cards">${diag.fixNow.map(d => `
       <div class="action-card fix-now">
-        <div class="card-priority">Fix Now</div>
+        <div class="card-priority">Fix Now ${d.time_s !== undefined ? `<button class="seek-btn" onclick="seekTimeline(${d.time_s})" style="float:right">📈 Show on Timeline</button>` : ''}</div>
         <div class="card-title">${d.title}</div>
         <div class="card-body">${d.body}</div>
         ${d.action ? `<div class="card-body" style="margin-top:10px;font-weight:600;color:var(--red);">→ ${d.action}</div>` : ''}
@@ -2070,7 +2196,7 @@ function renderDiagnostics(logData, eventData) {
     html += `<div class="diag-section-title">🟡 Investigate When Possible</div>`;
     html += `<div class="action-cards">${diag.investigate.map(d => `
       <div class="action-card investigate">
-        <div class="card-priority">Investigate</div>
+        <div class="card-priority">Investigate ${d.time_s !== undefined ? `<button class="seek-btn" onclick="seekTimeline(${d.time_s})" style="float:right">📈 Show on Timeline</button>` : ''}</div>
         <div class="card-title">${d.title}</div>
         <div class="card-body">${d.body}</div>
         ${d.action ? `<div class="card-body" style="margin-top:10px;font-weight:600;color:var(--yellow);">→ ${d.action}</div>` : ''}
@@ -2115,23 +2241,53 @@ function seekTimeline(time_s) {
     timelineNeedsRender = false;
   }
 
-  // Find the closest data point and show tooltip
-  if (chartInstance && chartInstance.data.labels) {
+  setTimeout(() => {
+    if (!chartInstance || !chartInstance.data.labels) return;
     const labels = chartInstance.data.labels;
+
+    // Find closest data point
     let closest = 0;
     let minDist = Infinity;
     for (let i = 0; i < labels.length; i++) {
       const d = Math.abs(parseFloat(labels[i]) - time_s);
       if (d < minDist) { minDist = d; closest = i; }
     }
-    // Trigger hover on the closest point
-    const meta = chartInstance.getDatasetMeta(0);
-    if (meta && meta.data[closest]) {
-      chartInstance.setActiveElements([{ datasetIndex: 0, index: closest }]);
-      chartInstance.tooltip.setActiveElements([{ datasetIndex: 0, index: closest }], { x: meta.data[closest].x, y: meta.data[closest].y });
-      chartInstance.update();
+
+    // Zoom to ±5s window around the event
+    const xScale = chartInstance.options.scales.x;
+    xScale.min = Math.max(0, time_s - 5).toFixed(1);
+    xScale.max = (time_s + 5).toFixed(1);
+    chartInstance.update();
+
+    // Draw highlight and show tooltip
+    setTimeout(() => {
+      const meta = chartInstance.getDatasetMeta(0);
+      if (meta && meta.data[closest]) {
+        chartInstance.setActiveElements([{ datasetIndex: 0, index: closest }]);
+        chartInstance.tooltip.setActiveElements(
+          [{ datasetIndex: 0, index: closest }],
+          { x: meta.data[closest].x, y: meta.data[closest].y }
+        );
+        chartInstance.update('none');
+      }
+    }, 100);
+
+    // Add "Reset Zoom" button if not already present
+    if (!document.getElementById('resetZoomBtn')) {
+      const btn = document.createElement('button');
+      btn.id = 'resetZoomBtn';
+      btn.className = 'chart-toggle active';
+      btn.textContent = '↩ Reset Zoom';
+      btn.style.marginLeft = '12px';
+      btn.onclick = () => {
+        delete chartInstance.options.scales.x.min;
+        delete chartInstance.options.scales.x.max;
+        chartInstance.update();
+        btn.remove();
+      };
+      document.getElementById('chartControls').appendChild(btn);
     }
-  }
+  }, 150);
 }
 
 // ==================== RENDER POWER DISTRIBUTION TAB ====================
@@ -2209,6 +2365,31 @@ function renderPower(logData) {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
+      onHover: (event, elements) => {
+        if (elements.length > 0 && parsedEvents) {
+          const idx = elements[0].index;
+          const t = sampled[idx].time_s;
+          // Auto-scroll error list if errors tab has been rendered
+          const errorItems = document.querySelectorAll('.error-item');
+          let closestItem = null;
+          let closestDist = Infinity;
+          errorItems.forEach(item => {
+            const timeEl = item.querySelector('.error-time');
+            if (timeEl) {
+              const itemTime = parseFloat(timeEl.textContent);
+              if (!isNaN(itemTime) && Math.abs(itemTime - t) < closestDist) {
+                closestDist = Math.abs(itemTime - t);
+                closestItem = item;
+              }
+            }
+          });
+          // Highlight closest error
+          errorItems.forEach(item => item.classList.remove('highlighted'));
+          if (closestItem && closestDist < 5) {
+            closestItem.classList.add('highlighted');
+          }
+        }
+      },
       plugins: {
         legend: { position: 'top', labels: { font: { family: 'Outfit', size: 11 }, usePointStyle: true, pointStyle: 'line' } },
         tooltip: { titleFont: { family: 'JetBrains Mono', size: 11 }, bodyFont: { family: 'JetBrains Mono', size: 10 } }
@@ -2222,100 +2403,6 @@ function renderPower(logData) {
 }
 
 // ==================== RENDER PIT BRIEF TAB ====================
-function renderPitBrief(logData, eventData) {
-  const records = logData.records;
-  const events = eventData.events;
-  const matchRecs = records.filter(r => r.mode === 'auto' || r.mode === 'teleop');
-  const validV = matchRecs.filter(r => r.voltage !== null);
-
-  // ---- Electrical Health ----
-  const minV = validV.length ? Math.min(...validV.map(r => r.voltage)) : 0;
-  const brownouts = records.filter(r => r.brownout).length;
-  let elecScore = 100;
-  if (minV < 8) elecScore -= 50;
-  else if (minV < 10) elecScore -= 30;
-  else if (minV < 11) elecScore -= 15;
-  else if (minV < 12) elecScore -= 5;
-  if (brownouts > 0) elecScore -= 25;
-  if (brownouts > 10) elecScore -= 15;
-  const maxTC = matchRecs.length ? Math.max(...matchRecs.map(r => r.totalCurrent || 0)) : 0;
-  if (maxTC > 120) elecScore -= 10;
-  elecScore = Math.max(0, Math.min(100, elecScore));
-
-  // ---- Network Health ----
-  const maxLoss = matchRecs.length ? Math.max(...matchRecs.map(r => r.packetLoss)) : 0;
-  const avgTrip = matchRecs.length ? matchRecs.reduce((s,r) => s + r.tripTime, 0) / matchRecs.length : 0;
-  let modeFlips = 0;
-  for (let i = 1; i < records.length; i++) {
-    if (records[i].mode !== records[i-1].mode) modeFlips++;
-  }
-  const flickerRate = modeFlips / (records.length * 0.02 || 1);
-  let netScore = 100;
-  if (maxLoss > 10) netScore -= 25;
-  else if (maxLoss > 5) netScore -= 12;
-  else if (maxLoss > 2) netScore -= 5;
-  if (avgTrip > 50) netScore -= 20;
-  else if (avgTrip > 20) netScore -= 10;
-  if (flickerRate > 2) netScore -= 25;
-  else if (flickerRate > 0.5) netScore -= 10;
-  netScore = Math.max(0, Math.min(100, netScore));
-
-  // ---- Code Health ----
-  const loopOverruns = events.filter(e => e.text.includes('Loop time') || e.text.includes('taking too long'));
-  const codeStarts = events.filter(e => e.title === 'Robot Code Started');
-  const codeExceptions = events.filter(e => e.severity === 'critical' && e.category === 'Code');
-  const watchdogs = records.filter(r => r.watchdog);
-  const avgCpu = matchRecs.length ? matchRecs.reduce((s,r) => s + r.rioCpu * 100, 0) / matchRecs.length : 0;
-  let codeScore = 100;
-  if (codeExceptions.length > 0) codeScore -= 20;
-  if (codeStarts.length > 1) codeScore -= 15;
-  if (loopOverruns.length > 5) codeScore -= 15;
-  else if (loopOverruns.length > 0) codeScore -= 5;
-  if (watchdogs.length > 50) codeScore -= 15;
-  else if (watchdogs.length > 10) codeScore -= 8;
-  if (avgCpu > 85) codeScore -= 10;
-  codeScore = Math.max(0, Math.min(100, codeScore));
-
-  function scoreColor(s) { return s >= 75 ? 'green' : s >= 50 ? 'yellow' : 'red'; }
-  function scoreLabel(s) { return s >= 75 ? 'GOOD' : s >= 50 ? 'CHECK' : 'FIX'; }
-
-  document.getElementById('pitBriefContent').innerHTML = `
-    <div style="text-align:center;margin-bottom:24px;">
-      <div style="font-size:22px;font-weight:700;margin-bottom:4px;">Pit Brief</div>
-      <div style="font-size:14px;color:var(--text-secondary);">At-a-glance status for the pit crew</div>
-    </div>
-    <div class="pit-scores">
-      <div class="pit-score-card">
-        <div class="stoplight ${scoreColor(elecScore)}">${elecScore}</div>
-        <div class="pit-score-label">⚡ Electrical</div>
-        <div class="pit-score-detail">
-          Min voltage: ${minV.toFixed(1)}V<br>
-          Brownouts: ${brownouts}<br>
-          Peak current: ${maxTC.toFixed(0)}A
-        </div>
-      </div>
-      <div class="pit-score-card">
-        <div class="stoplight ${scoreColor(netScore)}">${netScore}</div>
-        <div class="pit-score-label">📡 Network</div>
-        <div class="pit-score-detail">
-          Peak packet loss: ${maxLoss.toFixed(1)}%<br>
-          Avg trip time: ${avgTrip.toFixed(1)}ms<br>
-          Comms flicker: ${flickerRate.toFixed(1)}/s
-        </div>
-      </div>
-      <div class="pit-score-card">
-        <div class="stoplight ${scoreColor(codeScore)}">${codeScore}</div>
-        <div class="pit-score-label">💻 Code</div>
-        <div class="pit-score-detail">
-          Exceptions: ${codeExceptions.length}<br>
-          Loop overruns: ${loopOverruns.length}<br>
-          Avg CPU: ${avgCpu.toFixed(0)}%
-        </div>
-      </div>
-    </div>
-  `;
-}
-
 // ==================== FILE HANDLING ====================
 let loadedFiles = {};
 
