@@ -528,12 +528,78 @@ body {
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px solid var(--border);
+}
+.error-item.expanded .error-detail { display: block; }
+
+.error-excerpt { margin-bottom: 8px; }
+.excerpt-line {
+  padding: 6px 10px;
+  background: var(--red-bg);
+  border-left: 3px solid var(--red);
+  border-radius: 0 4px 4px 0;
+  margin-bottom: 4px;
   font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--red);
+  font-weight: 600;
+}
+.error-location {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--blue);
+  margin-bottom: 8px;
+}
+.stack-trace {
+  margin: 8px 0;
+  padding: 8px 12px;
+  background: var(--surface-alt);
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+.stack-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+.stack-team {
+  color: var(--maroon);
+  font-weight: 600;
+  padding: 2px 0;
+}
+.stack-lib {
+  color: var(--text-muted);
+  font-size: 10px;
+  padding: 2px 0;
+}
+.raw-toggle {
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 0;
+  font-family: 'JetBrains Mono', monospace;
+  user-select: none;
+}
+.raw-toggle:hover { color: var(--maroon); }
+.raw-content {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-muted);
   white-space: pre-wrap;
   word-break: break-all;
+  padding: 8px;
+  background: var(--surface-alt);
+  border-radius: 4px;
+  margin-top: 4px;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
-.error-item.expanded .error-detail { display: block; }
+.error-item.noise-item { opacity: 0.5; }
+.error-item.noise-item .error-header { font-style: italic; }
 
 /* ========== AI DIAGNOSTICS TAB ========== */
 .diag-section-title {
@@ -734,6 +800,19 @@ body {
   color: var(--text-secondary);
 }
 
+/* ========== CHART FULLSCREEN ========== */
+.chart-fullscreen {
+  position: fixed !important;
+  top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 9999;
+  height: 100vh !important;
+  background: var(--bg);
+  padding: 20px;
+  border-radius: 0 !important;
+  border: none !important;
+}
+.chart-fullscreen canvas { height: calc(100vh - 40px) !important; }
+
 /* ========== SCROLLBAR ========== */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: var(--surface-alt); }
@@ -786,8 +865,8 @@ body {
 
   <!-- TAB: Unified Timeline -->
   <div class="tab-panel" id="tab-timeline">
-    <div class="chart-controls" id="chartControls"></div>
-    <div class="chart-container" style="position:relative;height:380px;">
+    <div class="chart-controls" id="chartControls" style="display:flex;flex-wrap:wrap;align-items:center;"></div>
+    <div class="chart-container" style="position:relative;height:550px;" id="timelineChartContainer">
       <canvas id="timelineChart"></canvas>
     </div>
     <div class="chart-container" style="position:relative;height:80px;margin-top:8px;">
@@ -968,63 +1047,144 @@ function parseDSEvents(buffer) {
 // ==================== EVENT CLASSIFIER ====================
 function classifyEvent(text) {
   const lower = text.toLowerCase();
-  
-  // Critical errors
+
+  // ---- NOISE: auto-hidden by default ----
+  // Joystick config, vision status, periodic system info, signal logger, NavX retries
+  if (lower.includes('joystick') && (lower.includes('axes') || lower.includes('buttons') || lower.includes('povs')))
+    return { severity: 'info', category: 'System', title: 'Joystick Configuration', noise: true };
+  if (lower.includes('photon') || lower.includes('limelight') || lower.includes('camera'))
+    return { severity: 'info', category: 'Vision', title: 'Vision Status', noise: true };
+  if (lower.includes('info roborio') || lower.includes('info robori'))
+    return { severity: 'info', category: 'System', title: 'System Status', noise: true };
+  if (lower.includes('signal logger started') || lower.includes('signal logger:'))
+    return { severity: 'info', category: 'System', title: 'Signal Logger Status', noise: true };
+  if (lower.includes('navx') && lower.includes('opening'))
+    return { severity: 'info', category: 'Sensor', title: 'NavX Connection Attempt', noise: true };
+  if (lower.includes('driver station') && !lower.includes('lost') && !lower.includes('ping'))
+    return { severity: 'info', category: 'System', title: 'Driver Station Info', noise: true };
+  if (lower.includes('init:') || (lower.includes('init ') && !lower.includes('error')))
+    return { severity: 'info', category: 'Code', title: 'Subsystem Init', noise: true };
+  if (/^\s*at\s+/.test(text) || /^\s*$/.test(text))
+    return { severity: 'info', category: 'Code', title: 'Stack Trace Fragment', noise: true };
+
+  // ---- CRITICAL (true errors only) ----
   if (lower.includes('timed out') || lower.includes('timeout'))
     return { severity: 'critical', category: 'CAN', title: extractTitle(text, 'CAN Timeout') };
   if (lower.includes('brownout'))
     return { severity: 'critical', category: 'Power', title: 'Brownout Detected' };
-  if (lower.includes('error') && lower.includes('can'))
-    return { severity: 'critical', category: 'CAN', title: extractTitle(text, 'CAN Error') };
   if (lower.includes('unhandled exception') || lower.includes('error at') || lower.includes('crash'))
     return { severity: 'critical', category: 'Code', title: 'Code Exception' };
-  if (lower.includes('watchdog'))
+  if (lower.includes('watchdog') && !lower.includes('info'))
     return { severity: 'critical', category: 'System', title: 'Watchdog Timeout' };
-  if (lower.includes('loop overrun') || lower.includes('loop time'))
+  if (lower.includes('loop time') && lower.includes('exceeded'))
     return { severity: 'critical', category: 'System', title: 'Loop Overrun' };
-    
-  // Warnings
+
+  // ---- WARNINGS ----
   if (lower.includes('lost communication'))
     return { severity: 'warning', category: 'Comms', title: 'Communication Lost' };
   if (lower.includes('ping') && lower.includes('bad'))
     return { severity: 'warning', category: 'Comms', title: 'Ping Status Change' };
   if (lower.includes('not a spark max') || lower.includes('functionalities may not work'))
     return { severity: 'warning', category: 'CAN', title: 'CAN Device Mismatch' };
+  if (lower.includes('error') && lower.includes('can'))
+    return { severity: 'warning', category: 'CAN', title: extractTitle(text, 'CAN Warning') };
   if (lower.includes('update') && (lower.includes('firmware') || lower.includes('radio')))
     return { severity: 'warning', category: 'System', title: 'Firmware Update Needed' };
   if (lower.includes('low') && lower.includes('disk'))
     return { severity: 'warning', category: 'System', title: 'Low Disk Space' };
   if (lower.includes('reset safe parameters'))
     return { severity: 'warning', category: 'CAN', title: 'CAN Reset Parameters Timeout' };
-  if (lower.includes('navx') && lower.includes('opening'))
-    return { severity: 'warning', category: 'Sensor', title: 'NavX Connection Attempt' };
-    
-  // Info
+  if (lower.includes('warning'))
+    return { severity: 'warning', category: 'Code', title: extractTitle(text, 'Code Warning') };
+
+  // ---- INFO ----
   if (lower.includes('fms connected'))
     return { severity: 'info', category: 'FMS', title: 'FMS Connected' };
   if (lower.includes('code start'))
     return { severity: 'info', category: 'Code', title: 'Robot Code Started' };
-  if (lower.includes('joystick'))
-    return { severity: 'info', category: 'System', title: 'Joystick Configuration' };
-  if (lower.includes('signal logger'))
-    return { severity: 'info', category: 'System', title: 'Signal Logger Status' };
-  if (lower.includes('info roborio') || lower.includes('info robori'))
-    return { severity: 'info', category: 'System', title: 'System Status' };
-  if (lower.includes('driver station'))
-    return { severity: 'info', category: 'System', title: 'Driver Station Info' };
-  if (lower.includes('init:') || lower.includes('init '))
-    return { severity: 'info', category: 'Code', title: 'Subsystem Init' };
-    
+
   return { severity: 'info', category: 'Other', title: text.substring(0, 60) };
 }
 
 function extractTitle(text, fallback) {
-  // Try to extract meaningful title from tag-based messages
   const detailMatch = text.match(/<details>\s*(.{10,80}?)(?:\s*<|$)/);
   if (detailMatch) return detailMatch[1].trim().substring(0, 80);
   const msgMatch = text.match(/<message>\s*(.{10,80}?)(?:\s*<|$)/);
   if (msgMatch) return msgMatch[1].trim().substring(0, 80);
   return fallback;
+}
+
+function formatErrorDetail(text) {
+  // Smart excerpt: parse TagVersion XML, stack traces, and raw messages
+  let parts = [];
+  let rawText = text;
+
+  // Extract <details> fields from TagVersion messages
+  const detailsRegex = /<details>\s*([\s\S]*?)(?=\s*<(?:location|stack|TagVersion)|$)/g;
+  const locationRegex = /<location>\s*([\s\S]*?)(?=\s*<(?:stack|TagVersion)|$)/g;
+  const messageRegex = /<message>\s*([\s\S]*?)(?=\s*<TagVersion|$)/g;
+
+  let details = [], locations = [], messages = [];
+  let m;
+  while ((m = detailsRegex.exec(text)) !== null) details.push(m[1].trim());
+  while ((m = locationRegex.exec(text)) !== null) locations.push(m[1].trim());
+  while ((m = messageRegex.exec(text)) !== null) messages.push(m[1].trim());
+
+  // Build formatted output
+  let html = '';
+
+  // Show extracted details (the actual error messages)
+  const allMessages = [...details, ...messages].filter(d => d.length > 3);
+  if (allMessages.length > 0) {
+    html += '<div class="error-excerpt">';
+    allMessages.forEach(d => {
+      html += '<div class="excerpt-line">' + escapeHtml(d) + '</div>';
+    });
+    html += '</div>';
+
+    // Show locations (file:line references)
+    const allLocations = locations.filter(l => l.length > 3 && l.trim() !== '');
+    if (allLocations.length > 0) {
+      html += '<div class="error-location">';
+      allLocations.forEach(l => {
+        html += '<div>📍 ' + escapeHtml(l) + '</div>';
+      });
+      html += '</div>';
+    }
+  }
+
+  // Handle stack traces: highlight team code lines
+  const stackLines = text.split(/\n|<TagVersion>/).filter(l => l.trim().startsWith('at '));
+  if (stackLines.length > 0) {
+    // Find team code lines (frc.robot.*) vs library lines
+    const teamLines = stackLines.filter(l => l.includes('frc.robot'));
+    const libLines = stackLines.filter(l => !l.includes('frc.robot'));
+
+    if (teamLines.length > 0) {
+      html += '<div class="stack-trace">';
+      html += '<div class="stack-label">Your code:</div>';
+      teamLines.forEach(l => {
+        html += '<div class="stack-team">' + escapeHtml(l.trim()) + '</div>';
+      });
+      if (libLines.length > 0) {
+        html += '<div class="stack-label" style="margin-top:6px;opacity:0.5;">Library (' + libLines.length + ' frames)</div>';
+        html += '<div class="stack-lib">' + libLines.slice(0, 2).map(l => escapeHtml(l.trim())).join('<br>') + '</div>';
+      }
+      html += '</div>';
+    }
+  }
+
+  // If no structured content found, show first meaningful line
+  if (html === '') {
+    const firstLine = text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 200);
+    html = '<div class="error-excerpt"><div class="excerpt-line">' + escapeHtml(firstLine) + '</div></div>';
+  }
+
+  // Add "Show Raw" toggle
+  html += '<div class="raw-toggle" onclick="event.stopPropagation(); this.nextElementSibling.style.display = this.nextElementSibling.style.display === \'none\' ? \'block\' : \'none\'; this.textContent = this.textContent.includes(\'Show\') ? \'▾ Hide Raw\' : \'▸ Show Raw\'">▸ Show Raw</div>';
+  html += '<div class="raw-content" style="display:none">' + escapeHtml(text) + '</div>';
+
+  return html;
 }
 
 // ==================== DIAGNOSTIC RULE ENGINE ====================
@@ -1829,7 +1989,7 @@ function renderTimeline(logData, eventData) {
   
   document.getElementById('chartControls').innerHTML = controls.map(c =>
     `<button class="chart-toggle ${active[c] ? 'active' : ''}" data-series="${c}">${c}</button>`
-  ).join('');
+  ).join('') + '<button class="chart-toggle" id="fullscreenBtn" style="margin-left:auto;" onclick="toggleChartFullscreen()">⛶ Fullscreen</button>';
 
   document.querySelectorAll('.chart-toggle').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -2068,19 +2228,11 @@ function renderTimeline(logData, eventData) {
 
 function renderErrors(eventData) {
   const events = eventData.events;
-  
-  // Filter out system status (info roboRIO repeated) - keep unique meaningful events
+
+  // Dedup and group events
   const meaningful = [];
   const seen = new Set();
   for (const e of events) {
-    // Group repeated system status messages
-    if (e.title === 'System Status' && e.text.includes('Info roboRIO')) {
-      if (!seen.has('sysStatus')) {
-        seen.add('sysStatus');
-        meaningful.push({ ...e, count: events.filter(ev => ev.title === 'System Status').length });
-      }
-      continue;
-    }
     // Dedup by title + first 60 chars
     const key = e.title + '|' + e.text.substring(0, 60);
     if (seen.has(key)) {
@@ -2092,54 +2244,87 @@ function renderErrors(eventData) {
     meaningful.push({ ...e, count: 1 });
   }
 
-  // Sort: critical first, then warning, then info
   const severityOrder = { critical: 0, warning: 1, info: 2 };
   meaningful.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
 
-  // Filters
-  const critCount = meaningful.filter(e => e.severity === 'critical').length;
-  const warnCount = meaningful.filter(e => e.severity === 'warning').length;
-  const infoCount = meaningful.filter(e => e.severity === 'info').length;
+  // Separate noise from actionable
+  const actionable = meaningful.filter(e => !e.noise);
+  const noiseItems = meaningful.filter(e => e.noise);
+  const noiseCount = noiseItems.reduce((s, e) => s + (e.count || 1), 0);
 
-  document.getElementById('errorFilters').innerHTML = `
-    <button class="filter-chip active" data-filter="all">All <span class="count">${meaningful.length}</span></button>
-    <button class="filter-chip" data-filter="critical">Critical <span class="count">${critCount}</span></button>
-    <button class="filter-chip" data-filter="warning">Warning <span class="count">${warnCount}</span></button>
-    <button class="filter-chip" data-filter="info">Info <span class="count">${infoCount}</span></button>
-    <span style="margin-left:auto;display:flex;gap:4px;align-items:center;">
-      <span style="font-size:11px;color:var(--text-muted);">Sort:</span>
-      <button class="filter-chip active" data-sort="severity">By Severity</button>
-      <button class="filter-chip" data-sort="time-desc">Latest First</button>
-      <button class="filter-chip" data-sort="time-asc">Earliest First</button>
-    </span>
-  `;
+  const critCount = actionable.filter(e => e.severity === 'critical').length;
+  const warnCount = actionable.filter(e => e.severity === 'warning').length;
+  const infoCount = actionable.filter(e => e.severity === 'info').length;
 
+  let showNoise = false;
   let currentSort = 'severity';
+  let currentFilter = 'all';
 
   function formatEventTime(time_s) {
     if (time_s === undefined || time_s === null) return 'unknown';
-    return `${time_s.toFixed(1)}s`;
+    return time_s.toFixed(1) + 's';
   }
 
   function sortEvents(list, sortType) {
     const sorted = [...list];
-    if (sortType === 'severity') {
-      sorted.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
-    } else if (sortType === 'time-desc') {
-      sorted.sort((a, b) => (b.time_s || 0) - (a.time_s || 0));
-    } else if (sortType === 'time-asc') {
-      sorted.sort((a, b) => (a.time_s || 0) - (b.time_s || 0));
-    }
+    if (sortType === 'severity') sorted.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+    else if (sortType === 'time-desc') sorted.sort((a, b) => (b.time_s || 0) - (a.time_s || 0));
+    else if (sortType === 'time-asc') sorted.sort((a, b) => (a.time_s || 0) - (b.time_s || 0));
     return sorted;
   }
 
-  function renderList(filter) {
-    let filtered = filter === 'all' ? meaningful : meaningful.filter(e => e.severity === filter);
+  function renderFilters() {
+    const source = showNoise ? meaningful : actionable;
+    const crit = source.filter(e => e.severity === 'critical').length;
+    const warn = source.filter(e => e.severity === 'warning').length;
+    const inf = source.filter(e => e.severity === 'info').length;
+
+    document.getElementById('errorFilters').innerHTML = `
+      <button class="filter-chip ${currentFilter === 'all' ? 'active' : ''}" data-filter="all">Actionable <span class="count">${source.length}</span></button>
+      <button class="filter-chip ${currentFilter === 'critical' ? 'active' : ''}" data-filter="critical">Critical <span class="count">${crit}</span></button>
+      <button class="filter-chip ${currentFilter === 'warning' ? 'active' : ''}" data-filter="warning">Warning <span class="count">${warn}</span></button>
+      <button class="filter-chip ${currentFilter === 'info' ? 'active' : ''}" data-filter="info">Info <span class="count">${inf}</span></button>
+      <button class="filter-chip ${showNoise ? 'active' : ''}" id="noiseToggle" style="margin-left:8px;border-style:dashed;">
+        ${showNoise ? '✓ Showing' : 'Show'} Noise <span class="count">${noiseCount}</span>
+      </button>
+      <span style="margin-left:auto;display:flex;gap:4px;align-items:center;">
+        <span style="font-size:11px;color:var(--text-muted);">Sort:</span>
+        <button class="filter-chip ${currentSort === 'severity' ? 'active' : ''}" data-sort="severity">By Severity</button>
+        <button class="filter-chip ${currentSort === 'time-desc' ? 'active' : ''}" data-sort="time-desc">Latest First</button>
+        <button class="filter-chip ${currentSort === 'time-asc' ? 'active' : ''}" data-sort="time-asc">Earliest First</button>
+      </span>
+    `;
+
+    // Rebind events
+    document.querySelectorAll('.filter-chip[data-filter]').forEach(chip => {
+      chip.addEventListener('click', () => {
+        currentFilter = chip.dataset.filter;
+        renderFilters();
+        renderList();
+      });
+    });
+    document.querySelectorAll('.filter-chip[data-sort]').forEach(chip => {
+      chip.addEventListener('click', () => {
+        currentSort = chip.dataset.sort;
+        renderFilters();
+        renderList();
+      });
+    });
+    document.getElementById('noiseToggle').addEventListener('click', () => {
+      showNoise = !showNoise;
+      renderFilters();
+      renderList();
+    });
+  }
+
+  function renderList() {
+    const source = showNoise ? meaningful : actionable;
+    let filtered = currentFilter === 'all' ? source : source.filter(e => e.severity === currentFilter);
     filtered = sortEvents(filtered, currentSort);
-    document.getElementById('errorList').innerHTML = filtered.length === 0 
+    document.getElementById('errorList').innerHTML = filtered.length === 0
       ? '<div class="no-issues">No events matching this filter.</div>'
-      : filtered.map((e, i) => `
-        <div class="error-item ${e.severity}" onclick="this.classList.toggle('expanded')">
+      : filtered.map(e => `
+        <div class="error-item ${e.severity} ${e.noise ? 'noise-item' : ''}" onclick="this.classList.toggle('expanded')">
           <div class="error-header">
             <span class="severity-badge ${e.severity}">${e.severity}</span>
             <span class="error-title">${escapeHtml(e.title)}</span>
@@ -2147,31 +2332,13 @@ function renderErrors(eventData) {
             <span class="error-time" title="Time since log start">${formatEventTime(e.time_s)}</span>
             <button class="seek-btn" onclick="event.stopPropagation(); seekTimeline(${e.time_s || 0})">📈 Seek</button>
           </div>
-          <div class="error-detail">${escapeHtml(e.text)}</div>
+          <div class="error-detail">${formatErrorDetail(e.text)}</div>
         </div>
       `).join('');
   }
 
-  renderList('all');
-
-  let currentFilter = 'all';
-  document.querySelectorAll('.filter-chip[data-filter]').forEach(chip => {
-    chip.addEventListener('click', () => {
-      document.querySelectorAll('.filter-chip[data-filter]').forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
-      currentFilter = chip.dataset.filter;
-      renderList(currentFilter);
-    });
-  });
-
-  document.querySelectorAll('.filter-chip[data-sort]').forEach(chip => {
-    chip.addEventListener('click', () => {
-      document.querySelectorAll('.filter-chip[data-sort]').forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
-      currentSort = chip.dataset.sort;
-      renderList(currentFilter);
-    });
-  });
+  renderFilters();
+  renderList();
 }
 
 function renderDiagnostics(logData, eventData) {
@@ -2229,6 +2396,30 @@ function escapeHtml(str) {
 }
 
 // ==================== CROSS-HIGHLIGHT: SEEK TIMELINE FROM ERRORS ====================
+function toggleChartFullscreen() {
+  const container = document.getElementById('timelineChartContainer');
+  const btn = document.getElementById('fullscreenBtn');
+  if (container.classList.contains('chart-fullscreen')) {
+    container.classList.remove('chart-fullscreen');
+    btn.textContent = '⛶ Fullscreen';
+    container.style.height = '550px';
+  } else {
+    container.classList.add('chart-fullscreen');
+    btn.textContent = '✕ Exit Fullscreen';
+  }
+  setTimeout(() => { if (chartInstance) chartInstance.resize(); }, 100);
+}
+
+// ESC key exits fullscreen
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const container = document.getElementById('timelineChartContainer');
+    if (container && container.classList.contains('chart-fullscreen')) {
+      toggleChartFullscreen();
+    }
+  }
+});
+
 function seekTimeline(time_s) {
   // Switch to timeline tab
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
