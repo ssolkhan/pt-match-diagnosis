@@ -158,7 +158,11 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
+.history-table th:hover { color: var(--maroon); background: var(--maroon-bg); }
 .history-table td {
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
@@ -2865,7 +2869,6 @@ function loadMatchHistory() {
 
   container.innerHTML = '<div class="history-loading">Loading match history...</div>';
 
-  // Use the Apps Script doGet endpoint
   fetch(APPS_SCRIPT_URL)
     .then(r => r.json())
     .then(data => {
@@ -2874,48 +2877,131 @@ function loadMatchHistory() {
         return;
       }
 
-      const matches = data.matches.reverse(); // newest first
-      const healthColor = s => s >= 75 ? 'var(--green)' : s >= 50 ? 'var(--yellow)' : 'var(--red)';
+      const allMatches = data.matches.reverse(); // newest first
+      let currentSort = { col: 'Timestamp', dir: 'desc' };
+      let filterEvent = '';
+      let filterBattery = '';
 
-      container.innerHTML = `
-        <div style="margin-bottom:16px;display:flex;align-items:center;gap:12px;">
-          <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;">Match History</div>
-          <div style="font-size:12px;color:var(--text-muted);">${matches.length} matches recorded</div>
-          <button onclick="loadMatchHistory()" style="margin-left:auto;padding:5px 12px;border:1px solid var(--border);background:var(--surface);border-radius:6px;font-size:11px;cursor:pointer;font-family:'Outfit',sans-serif;">↻ Refresh</button>
-        </div>
-        <table class="history-table">
-          <thead>
-            <tr>
-              <th>Match</th>
-              <th>Event</th>
-              <th>Battery</th>
-              <th>Health</th>
-              <th>Min V</th>
-              <th>Avg V</th>
-              <th>Pkt Loss</th>
-              <th>CPU</th>
-              <th>Errors</th>
-              <th>Fix Now</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${matches.map(m => `
-              <tr>
-                <td style="font-weight:600;">${escapeHtml(String(m['Match Type'] || ''))} ${escapeHtml(String(m['Match Number'] || ''))}</td>
-                <td style="font-family:'Outfit',sans-serif;font-size:12px;">${escapeHtml(String(m['Event Name'] || ''))}</td>
-                <td>${escapeHtml(String(m['Battery ID'] || '—'))}</td>
-                <td><span class="health-dot" style="background:${healthColor(m['Health Score'] || 0)}"></span>${m['Health Score'] || 0}</td>
-                <td>${Number(m['Min Voltage'] || 0).toFixed(1)}V</td>
-                <td>${Number(m['Avg Voltage'] || 0).toFixed(1)}V</td>
-                <td>${Number(m['Max Packet Loss'] || 0).toFixed(1)}%</td>
-                <td>${Number(m['Avg CPU'] || 0).toFixed(0)}%</td>
-                <td>${m['Critical Errors'] || 0}</td>
-                <td style="font-family:'Outfit',sans-serif;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(String(m['Fix Now Items'] || '—'))}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      `;
+      // Column definitions: key, label, format function, width
+      const columns = [
+        { key: 'Timestamp', label: 'Date/Time', fmt: v => { try { const d = new Date(v); return d.toLocaleDateString('en-US', {month:'short',day:'numeric'}) + ' ' + d.toLocaleTimeString('en-US', {hour:'2-digit',minute:'2-digit'}); } catch(e) { return String(v||''); } }, width: '130px' },
+        { key: 'Event Name', label: 'Event', fmt: v => v || '—', width: '150px' },
+        { key: 'Match Type', label: 'Type', fmt: v => v || '—', width: '60px' },
+        { key: 'Match Number', label: '#', fmt: v => v || '—', width: '40px' },
+        { key: 'Battery ID', label: 'Battery', fmt: v => v || '—', width: '90px' },
+        { key: 'Health Score', label: 'Health', fmt: v => v, width: '70px', health: true },
+        { key: 'Min Voltage', label: 'Min V', fmt: v => Number(v||0).toFixed(1), width: '60px', warn: v => v < 10 },
+        { key: 'Avg Voltage', label: 'Avg V', fmt: v => Number(v||0).toFixed(1), width: '60px' },
+        { key: 'Max Packet Loss', label: 'Pkt Loss', fmt: v => Number(v||0).toFixed(1) + '%', width: '70px', warn: v => v > 5 },
+        { key: 'Avg Trip Time', label: 'Trip ms', fmt: v => Number(v||0).toFixed(1), width: '60px' },
+        { key: 'Comms Flicker Rate', label: 'Flicker/s', fmt: v => Number(v||0).toFixed(1), width: '70px', warn: v => v > 2 },
+        { key: 'Peak CAN Usage', label: 'CAN%', fmt: v => Number(v||0).toFixed(0), width: '55px', warn: v => v > 70 },
+        { key: 'Avg CPU', label: 'CPU%', fmt: v => Number(v||0).toFixed(0), width: '55px', warn: v => v > 85 },
+        { key: 'Brownout Count', label: 'Brownouts', fmt: v => v || 0, width: '70px', warn: v => v > 0 },
+        { key: 'Auto Duration', label: 'Auto s', fmt: v => Number(v||0).toFixed(1), width: '55px' },
+        { key: 'Teleop Duration', label: 'Teleop s', fmt: v => Number(v||0).toFixed(1), width: '65px' },
+        { key: 'Critical Errors', label: 'Crit', fmt: v => v || 0, width: '45px', warn: v => v > 0 },
+        { key: 'Warnings', label: 'Warn', fmt: v => v || 0, width: '50px' },
+        { key: 'Battery Resistance mΩ', label: 'R mΩ', fmt: v => Number(v||0).toFixed(1), width: '55px' },
+        { key: 'Fix Now Items', label: 'Fix Now Items', fmt: v => v || '—', width: '200px' },
+      ];
+
+      // Get unique events and batteries for filter dropdowns
+      const uniqueEvents = [...new Set(allMatches.map(m => m['Event Name']).filter(Boolean))];
+      const uniqueBatteries = [...new Set(allMatches.map(m => m['Battery ID']).filter(Boolean))];
+
+      function getFiltered() {
+        let filtered = allMatches;
+        if (filterEvent) filtered = filtered.filter(m => m['Event Name'] === filterEvent);
+        if (filterBattery) filtered = filtered.filter(m => m['Battery ID'] === filterBattery);
+        // Sort
+        filtered = [...filtered].sort((a, b) => {
+          let va = a[currentSort.col] ?? '';
+          let vb = b[currentSort.col] ?? '';
+          // Try numeric comparison
+          const na = Number(va), nb = Number(vb);
+          if (!isNaN(na) && !isNaN(nb)) {
+            return currentSort.dir === 'asc' ? na - nb : nb - na;
+          }
+          // String comparison
+          va = String(va).toLowerCase(); vb = String(vb).toLowerCase();
+          return currentSort.dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+        });
+        return filtered;
+      }
+
+      function render() {
+        const filtered = getFiltered();
+        const healthColor = s => Number(s) >= 75 ? 'var(--green)' : Number(s) >= 50 ? 'var(--yellow)' : 'var(--red)';
+        const sortArrow = col => currentSort.col === col ? (currentSort.dir === 'asc' ? ' ↑' : ' ↓') : '';
+
+        container.innerHTML = `
+          <div style="margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;">Match History</div>
+            <div style="font-size:12px;color:var(--text-muted);">${filtered.length} of ${allMatches.length} matches</div>
+            <select id="histFilterEvent" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-family:'Outfit',sans-serif;font-size:12px;background:var(--surface);cursor:pointer;">
+              <option value="">All Events</option>
+              ${uniqueEvents.map(e => `<option value="${escapeHtml(e)}" ${filterEvent===e?'selected':''}>${escapeHtml(e)}</option>`).join('')}
+            </select>
+            <select id="histFilterBattery" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:12px;background:var(--surface);cursor:pointer;">
+              <option value="">All Batteries</option>
+              ${uniqueBatteries.map(b => `<option value="${escapeHtml(b)}" ${filterBattery===b?'selected':''}>${escapeHtml(b)}</option>`).join('')}
+            </select>
+            <button onclick="loadMatchHistory()" style="margin-left:auto;padding:5px 12px;border:1px solid var(--border);background:var(--surface);border-radius:6px;font-size:11px;cursor:pointer;font-family:'Outfit',sans-serif;">↻ Refresh</button>
+          </div>
+          <div style="overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius);">
+            <table class="history-table" style="min-width:1400px;">
+              <thead>
+                <tr>
+                  ${columns.map(c => `<th class="sortable-th" data-col="${c.key}" style="cursor:pointer;white-space:nowrap;min-width:${c.width};user-select:none;" title="Click to sort">${c.label}${sortArrow(c.key)}</th>`).join('')}
+                </tr>
+              </thead>
+              <tbody>
+                ${filtered.length === 0 ? `<tr><td colspan="${columns.length}" style="text-align:center;padding:24px;color:var(--text-muted);">No matches match the current filters.</td></tr>` :
+                filtered.map(m => `
+                  <tr>
+                    ${columns.map(c => {
+                      const raw = m[c.key];
+                      const display = c.fmt(raw);
+                      let style = '';
+                      if (c.warn && c.warn(Number(raw||0))) style = 'color:var(--red);font-weight:600;';
+                      if (c.health) {
+                        const hc = healthColor(raw);
+                        return `<td><span class="health-dot" style="background:${hc}"></span><span style="color:${hc};font-weight:600;">${display}</span></td>`;
+                      }
+                      if (c.key === 'Fix Now Items') {
+                        return `<td style="font-family:'Outfit',sans-serif;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(String(raw||''))}">${escapeHtml(String(display))}</td>`;
+                      }
+                      return `<td style="${style}">${escapeHtml(String(display))}</td>`;
+                    }).join('')}
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+
+        // Bind sort handlers
+        container.querySelectorAll('.sortable-th').forEach(th => {
+          th.addEventListener('click', () => {
+            const col = th.dataset.col;
+            if (currentSort.col === col) {
+              currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
+            } else {
+              currentSort = { col, dir: 'asc' };
+            }
+            render();
+          });
+        });
+
+        // Bind filter handlers
+        const evSelect = document.getElementById('histFilterEvent');
+        const batSelect = document.getElementById('histFilterBattery');
+        if (evSelect) evSelect.addEventListener('change', () => { filterEvent = evSelect.value; render(); });
+        if (batSelect) batSelect.addEventListener('change', () => { filterBattery = batSelect.value; render(); });
+      }
+
+      render();
     })
     .catch(err => {
       container.innerHTML = '<div class="history-loading">Failed to load match history.<br><span style="font-size:12px;color:var(--text-muted);">' + escapeHtml(err.message) + '</span></div>';
