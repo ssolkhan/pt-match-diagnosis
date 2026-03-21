@@ -2926,7 +2926,11 @@ function loadMatchHistory() {
 const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
 
-dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('click', (e) => {
+  // Don't open file dialog if clicking on the meta inputs area
+  if (e.target.closest('#metaInputs')) return;
+  fileInput.click();
+});
 fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
 
 ['dragenter', 'dragover'].forEach(evtName => {
