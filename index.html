@@ -108,6 +108,75 @@ body {
   font-family: 'JetBrains Mono', monospace;
   display: none;
 }
+.battery-badge {
+  background: var(--yellow-bg);
+  color: var(--yellow);
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  display: none;
+}
+.event-badge {
+  background: var(--blue-bg);
+  color: var(--blue);
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  display: none;
+}
+.save-status {
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 4px 10px;
+  border-radius: 12px;
+  display: none;
+}
+.save-status.saving { background: var(--yellow-bg); color: var(--yellow); }
+.save-status.saved { background: var(--green-bg); color: var(--green); }
+.save-status.error { background: var(--red-bg); color: var(--red); }
+
+/* ========== MATCH HISTORY TAB ========== */
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.history-table th {
+  background: var(--surface-alt);
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border);
+}
+.history-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+.history-table tr:hover td { background: var(--surface-alt); }
+.history-table .health-dot {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.history-loading {
+  text-align: center;
+  padding: 40px;
+  color: var(--text-muted);
+}
 
 /* ========== DROP ZONE ========== */
 .drop-zone-container {
@@ -829,7 +898,10 @@ body {
     <h1>PyroTech <span>Match Diagnostics</span></h1>
   </div>
   <div class="header-meta">
+    <div class="event-badge" id="eventBadge"></div>
     <div class="match-badge" id="matchBadge"></div>
+    <div class="battery-badge" id="batteryBadge"></div>
+    <div class="save-status" id="saveStatus"></div>
     <div style="font-size:12px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;" id="fileInfo"></div>
     <button onclick="resetDashboard()" id="loadNewBtn" style="display:none;padding:7px 16px;border:1px solid var(--border);background:var(--surface);border-radius:6px;font-family:'Outfit',sans-serif;font-size:12px;font-weight:500;cursor:pointer;color:var(--text-secondary);transition:all 0.15s;" onmouseover="this.style.borderColor='var(--maroon)';this.style.color='var(--maroon)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-secondary)'">Load Different Logs</button>
   </div>
@@ -843,6 +915,17 @@ body {
     <p>Drag & drop your <strong>.dslog</strong> and <strong>.dsevents</strong> files<br>or click to browse</p>
     <div class="hint">.dslog (telemetry) + .dsevents (events) — both v3 and v4 supported</div>
     <input type="file" id="fileInput" multiple accept=".dslog,.dsevents">
+    <div id="metaInputs" style="display:none; margin-top:20px; text-align:left; max-width:360px; margin-left:auto; margin-right:auto;">
+      <div style="margin-bottom:10px;">
+        <label style="font-size:12px;font-weight:600;color:var(--text-secondary);display:block;margin-bottom:4px;">🔋 Battery ID <span style="font-weight:400;color:var(--text-muted);">(optional)</span></label>
+        <input type="text" id="batteryIdInput" placeholder="e.g. Battery #7, B-03" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:13px;outline:none;" onfocus="this.style.borderColor='var(--maroon)'" onblur="this.style.borderColor='var(--border)'">
+      </div>
+      <div style="margin-bottom:14px;">
+        <label style="font-size:12px;font-weight:600;color:var(--text-secondary);display:block;margin-bottom:4px;">🏟️ Event Name <span style="font-weight:400;color:var(--text-muted);">(optional)</span></label>
+        <input type="text" id="eventNameInput" placeholder="e.g. Wake County Regional" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-family:'Outfit',sans-serif;font-size:13px;outline:none;" onfocus="this.style.borderColor='var(--maroon)'" onblur="this.style.borderColor='var(--border)'">
+      </div>
+      <button id="parseBtn" onclick="triggerParse()" style="width:100%;padding:10px;background:var(--maroon);color:white;border:none;border-radius:8px;font-family:'Outfit',sans-serif;font-size:14px;font-weight:600;cursor:pointer;">🔥 Analyze Match</button>
+    </div>
   </div>
 </div>
 
@@ -854,6 +937,7 @@ body {
     <button class="tab-btn" data-tab="power">⚡ Power</button>
     <button class="tab-btn" data-tab="errors">⚠️ Errors & Warnings</button>
     <button class="tab-btn" data-tab="diagnostics">🩺 Insights</button>
+    <button class="tab-btn" data-tab="history">📋 Match History</button>
   </div>
 
   <!-- TAB: Match Summary -->
@@ -891,6 +975,13 @@ body {
   <!-- TAB: Insights -->
   <div class="tab-panel" id="tab-diagnostics">
     <div id="diagnosticsContent"></div>
+  </div>
+
+  <!-- TAB: Match History -->
+  <div class="tab-panel" id="tab-history">
+    <div id="matchHistoryContent">
+      <div class="history-loading">Loading match history...</div>
+    </div>
   </div>
 
 
@@ -1794,37 +1885,113 @@ let modeChartInstance = null;
 let parsedLog = null;
 let parsedEvents = null;
 
-function renderDashboard(logData, eventData) {
+function renderDashboard(logData, eventData, meta) {
   parsedLog = logData;
   parsedEvents = eventData;
+  meta = meta || {};
 
   document.getElementById('dropContainer').style.display = 'none';
   document.getElementById('dashboard').classList.add('active');
   document.getElementById('loadNewBtn').style.display = 'inline-block';
 
-  // Set match badge
+  // Extract match info from FMS event
+  let matchType = '', matchNumber = '';
   const fmsEvent = eventData.events.find(e => e.text.includes('FMS Connected'));
   if (fmsEvent) {
     const matchInfo = fmsEvent.text.match(/Qualification\s*-\s*(\d+)/i) ||
                       fmsEvent.text.match(/Playoff\s*-\s*(\d+)/i) ||
                       fmsEvent.text.match(/Practice\s*-\s*(\d+)/i);
     if (matchInfo) {
+      matchType = fmsEvent.text.includes('Qual') ? 'Qual' : fmsEvent.text.includes('Playoff') ? 'Playoff' : 'Practice';
+      matchNumber = matchInfo[1];
       const badge = document.getElementById('matchBadge');
-      const type = fmsEvent.text.includes('Qual') ? 'Qual' : fmsEvent.text.includes('Playoff') ? 'Playoff' : 'Practice';
-      badge.textContent = `${type} ${matchInfo[1]}`;
+      badge.textContent = `${matchType} ${matchNumber}`;
       badge.style.display = 'inline-block';
     }
   }
 
-  document.getElementById('fileInfo').textContent = 
+  // Show battery badge
+  if (meta.batteryId) {
+    const bb = document.getElementById('batteryBadge');
+    bb.textContent = `🔋 ${meta.batteryId}`;
+    bb.style.display = 'inline-block';
+  }
+
+  // Show event badge
+  if (meta.eventName) {
+    const eb = document.getElementById('eventBadge');
+    eb.textContent = `🏟️ ${meta.eventName}`;
+    eb.style.display = 'inline-block';
+  }
+
+  document.getElementById('fileInfo').textContent =
     `${logData.records.length.toLocaleString()} records | ${(logData.records.length * 0.02 / 60).toFixed(1)} min`;
 
   renderSummary(logData, eventData);
   renderErrors(eventData);
-  renderDiagnostics(logData, eventData);
-  // Timeline and Power charts deferred until tab is first shown (Chart.js needs visible container)
+  const diagnostics = renderDiagnostics(logData, eventData);
   timelineNeedsRender = true;
   powerNeedsRender = true;
+
+  // ---- AUTO-SAVE TO GOOGLE SHEETS ----
+  const records = logData.records;
+  const matchRecs = records.filter(r => r.mode === 'auto' || r.mode === 'teleop');
+  const validV = matchRecs.filter(r => r.voltage !== null);
+  const minV = validV.length ? Math.min(...validV.map(r => r.voltage)) : 0;
+  const avgV = validV.length ? validV.reduce((s,r) => s + r.voltage, 0) / validV.length : 0;
+  const maxLoss = matchRecs.length ? Math.max(...matchRecs.map(r => r.packetLoss)) : 0;
+  const avgTrip = matchRecs.length ? matchRecs.reduce((s,r) => s + r.tripTime, 0) / matchRecs.length : 0;
+  let modeFlips = 0;
+  for (let i = 1; i < records.length; i++) if (records[i].mode !== records[i-1].mode) modeFlips++;
+  const flickerRate = modeFlips / (records.length * 0.02 || 1);
+  const maxCan = matchRecs.length ? Math.max(...matchRecs.map(r => r.canUsage)) : 0;
+  const avgCpu = matchRecs.length ? matchRecs.reduce((s,r) => s + r.rioCpu * 100, 0) / matchRecs.length : 0;
+  const brownouts = records.filter(r => r.brownout).length;
+  const critErrors = eventData.events.filter(e => e.severity === 'critical' && !e.noise).length;
+  const warnings = eventData.events.filter(e => e.severity === 'warning' && !e.noise).length;
+  const autoRecs = records.filter(r => r.mode === 'auto');
+  const teleopRecs = records.filter(r => r.mode === 'teleop');
+
+  // Health score
+  let health = 100;
+  if (minV < 8) health -= 40; else if (minV < 10) health -= 25; else if (minV < 11) health -= 10;
+  if (brownouts > 0) health -= 20;
+  if (maxLoss > 10) health -= 15; else if (maxLoss > 5) health -= 8;
+  if (critErrors > 3) health -= 15; else if (critErrors > 0) health -= 8;
+  if (autoRecs.length * 0.02 < 5 && autoRecs.length > 0) health -= 10;
+  if (matchRecs.length === 0) health = 5;
+  health = Math.max(0, Math.min(100, health));
+
+  // Fix now items summary
+  const fixItems = diagnostics ? diagnostics.fixNow.map(d => d.title.replace(/[^\w\s]/g, '').trim()).join('; ') : '';
+
+  // Extract log filename from loaded file
+  const logFilename = loadedFiles.dslog ? loadedFiles.dslog.name.replace('.dslog', '') : '';
+
+  saveMatchToSheet({
+    timestamp: logData.startTime ? logData.startTime.toISOString() : new Date().toISOString(),
+    eventName: meta.eventName || '',
+    matchType,
+    matchNumber,
+    batteryId: meta.batteryId || '',
+    logFilename,
+    healthScore: health,
+    minVoltage: +minV.toFixed(2),
+    avgVoltage: +avgV.toFixed(2),
+    maxPacketLoss: +maxLoss.toFixed(1),
+    avgTripTime: +avgTrip.toFixed(1),
+    commsFlickerRate: +flickerRate.toFixed(1),
+    peakCanUsage: +(maxCan * 100).toFixed(1),
+    avgCpu: +avgCpu.toFixed(0),
+    brownoutCount: brownouts,
+    autoDuration: +(autoRecs.length * 0.02).toFixed(1),
+    teleopDuration: +(teleopRecs.length * 0.02).toFixed(1),
+    criticalErrors: critErrors,
+    warnings,
+    fixNowItems: fixItems,
+    batteryResistance: 0,
+    season: new Date().getFullYear()
+  });
 }
 
 function renderSummary(logData, eventData) {
@@ -2389,6 +2556,7 @@ function renderDiagnostics(logData, eventData) {
   }
 
   container.innerHTML = html;
+  return diag;
 }
 
 function escapeHtml(str) {
@@ -2597,6 +2765,17 @@ function renderPower(logData) {
 // ==================== FILE HANDLING ====================
 let loadedFiles = {};
 
+// Global config — loaded from Vercel API route
+let APPS_SCRIPT_URL = null;
+let SHEET_ID = null;
+let currentMatchMeta = {};
+
+// Fetch config on page load
+fetch('/api/config').then(r => r.json()).then(cfg => {
+  APPS_SCRIPT_URL = cfg.appsScriptUrl;
+  SHEET_ID = cfg.sheetId;
+}).catch(() => { /* offline or no config — still works for local analysis */ });
+
 function handleFiles(files) {
   for (const file of files) {
     const ext = file.name.split('.').pop().toLowerCase();
@@ -2606,35 +2785,141 @@ function handleFiles(files) {
   }
 
   if (loadedFiles.dslog && loadedFiles.dsevents) {
-    // Show loading state
-    document.querySelector('.drop-zone h2').textContent = 'Parsing logs...';
-    document.querySelector('.drop-zone p').innerHTML = 'Processing telemetry and events data';
-
-    Promise.all([
-      loadedFiles.dslog.arrayBuffer(),
-      loadedFiles.dsevents.arrayBuffer()
-    ]).then(([logBuf, evBuf]) => {
-      // Use a small timeout to let the UI update with loading message
-      setTimeout(() => {
-        try {
-          const logData = parseDSLog(logBuf);
-          const eventData = parseDSEvents(evBuf);
-          renderDashboard(logData, eventData);
-        } catch (err) {
-          alert('Error parsing log files: ' + err.message);
-          console.error(err);
-          document.querySelector('.drop-zone h2').textContent = 'Drop Robot Logs Here';
-          document.querySelector('.drop-zone p').innerHTML = 'Drag & drop your <strong>.dslog</strong> and <strong>.dsevents</strong> files<br>or click to browse';
-        }
-      }, 50);
-    });
+    // Both files ready — show meta inputs
+    document.querySelector('.drop-zone h2').textContent = '✓ Files Ready';
+    document.querySelector('.drop-zone p').innerHTML =
+      '<strong style="color:var(--green)">✓ .dslog</strong> + <strong style="color:var(--green)">✓ .dsevents</strong>';
+    document.querySelector('.drop-zone .hint').style.display = 'none';
+    document.getElementById('metaInputs').style.display = 'block';
+    // Restore last event name
+    const lastEvent = localStorage.getItem('pt_lastEventName');
+    if (lastEvent) document.getElementById('eventNameInput').value = lastEvent;
   } else if (loadedFiles.dslog || loadedFiles.dsevents) {
-    // Only one file loaded so far
     const have = loadedFiles.dslog ? '.dslog' : '.dsevents';
     const need = loadedFiles.dslog ? '.dsevents' : '.dslog';
-    document.querySelector('.drop-zone p').innerHTML = 
+    document.querySelector('.drop-zone p').innerHTML =
       `<strong style="color:var(--green)">✓ ${have} loaded</strong><br>Now drop the matching <strong>${need}</strong> file`;
   }
+}
+
+function triggerParse() {
+  const batteryId = document.getElementById('batteryIdInput').value.trim();
+  const eventName = document.getElementById('eventNameInput').value.trim();
+  // Save event name for next time
+  if (eventName) localStorage.setItem('pt_lastEventName', eventName);
+  currentMatchMeta = { batteryId, eventName };
+
+  document.querySelector('.drop-zone h2').textContent = 'Parsing logs...';
+  document.getElementById('metaInputs').style.display = 'none';
+
+  Promise.all([
+    loadedFiles.dslog.arrayBuffer(),
+    loadedFiles.dsevents.arrayBuffer()
+  ]).then(([logBuf, evBuf]) => {
+    setTimeout(() => {
+      try {
+        const logData = parseDSLog(logBuf);
+        const eventData = parseDSEvents(evBuf);
+        renderDashboard(logData, eventData, currentMatchMeta);
+      } catch (err) {
+        alert('Error parsing log files: ' + err.message);
+        console.error(err);
+        document.querySelector('.drop-zone h2').textContent = 'Drop Robot Logs Here';
+        document.querySelector('.drop-zone p').innerHTML = 'Drag & drop your <strong>.dslog</strong> and <strong>.dsevents</strong> files<br>or click to browse';
+        document.querySelector('.drop-zone .hint').style.display = 'block';
+        document.getElementById('metaInputs').style.display = 'none';
+      }
+    }, 50);
+  });
+}
+
+function saveMatchToSheet(summary) {
+  if (!APPS_SCRIPT_URL) return; // No backend configured
+  const status = document.getElementById('saveStatus');
+  status.style.display = 'inline-block';
+  status.className = 'save-status saving';
+  status.textContent = '⏳ Saving...';
+
+  fetch(APPS_SCRIPT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify(summary),
+    mode: 'no-cors' // Apps Script requires this
+  }).then(() => {
+    status.className = 'save-status saved';
+    status.textContent = '✓ Saved';
+    setTimeout(() => { status.style.display = 'none'; }, 3000);
+  }).catch(err => {
+    status.className = 'save-status error';
+    status.textContent = '✗ Save failed';
+    console.error('Save failed:', err);
+  });
+}
+
+function loadMatchHistory() {
+  const container = document.getElementById('matchHistoryContent');
+  if (!APPS_SCRIPT_URL) {
+    container.innerHTML = '<div class="history-loading">Match history requires the Google Sheets backend.<br><span style="font-size:12px;color:var(--text-muted);">Set APPS_SCRIPT_URL in Vercel environment variables.</span></div>';
+    return;
+  }
+
+  container.innerHTML = '<div class="history-loading">Loading match history...</div>';
+
+  // Use the Apps Script doGet endpoint
+  fetch(APPS_SCRIPT_URL)
+    .then(r => r.json())
+    .then(data => {
+      if (!data.success || !data.matches || data.matches.length === 0) {
+        container.innerHTML = '<div class="history-loading">No match history yet. Analyze a match to start recording.</div>';
+        return;
+      }
+
+      const matches = data.matches.reverse(); // newest first
+      const healthColor = s => s >= 75 ? 'var(--green)' : s >= 50 ? 'var(--yellow)' : 'var(--red)';
+
+      container.innerHTML = `
+        <div style="margin-bottom:16px;display:flex;align-items:center;gap:12px;">
+          <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;">Match History</div>
+          <div style="font-size:12px;color:var(--text-muted);">${matches.length} matches recorded</div>
+          <button onclick="loadMatchHistory()" style="margin-left:auto;padding:5px 12px;border:1px solid var(--border);background:var(--surface);border-radius:6px;font-size:11px;cursor:pointer;font-family:'Outfit',sans-serif;">↻ Refresh</button>
+        </div>
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Match</th>
+              <th>Event</th>
+              <th>Battery</th>
+              <th>Health</th>
+              <th>Min V</th>
+              <th>Avg V</th>
+              <th>Pkt Loss</th>
+              <th>CPU</th>
+              <th>Errors</th>
+              <th>Fix Now</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${matches.map(m => `
+              <tr>
+                <td style="font-weight:600;">${escapeHtml(String(m['Match Type'] || ''))} ${escapeHtml(String(m['Match Number'] || ''))}</td>
+                <td style="font-family:'Outfit',sans-serif;font-size:12px;">${escapeHtml(String(m['Event Name'] || ''))}</td>
+                <td>${escapeHtml(String(m['Battery ID'] || '—'))}</td>
+                <td><span class="health-dot" style="background:${healthColor(m['Health Score'] || 0)}"></span>${m['Health Score'] || 0}</td>
+                <td>${Number(m['Min Voltage'] || 0).toFixed(1)}V</td>
+                <td>${Number(m['Avg Voltage'] || 0).toFixed(1)}V</td>
+                <td>${Number(m['Max Packet Loss'] || 0).toFixed(1)}%</td>
+                <td>${Number(m['Avg CPU'] || 0).toFixed(0)}%</td>
+                <td>${m['Critical Errors'] || 0}</td>
+                <td style="font-family:'Outfit',sans-serif;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(String(m['Fix Now Items'] || '—'))}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    })
+    .catch(err => {
+      container.innerHTML = '<div class="history-loading">Failed to load match history.<br><span style="font-size:12px;color:var(--text-muted);">' + escapeHtml(err.message) + '</span></div>';
+    });
 }
 
 // Drop zone events
@@ -2674,6 +2959,10 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
         setTimeout(() => { chartInstance.resize(); if (modeChartInstance) modeChartInstance.resize(); }, 50);
       }
     }
+    // Load match history on first visit
+    if (btn.dataset.tab === 'history') {
+      loadMatchHistory();
+    }
     // Render power chart on first visit
     if (btn.dataset.tab === 'power') {
       if (powerNeedsRender && parsedLog) {
@@ -2693,7 +2982,13 @@ function resetDashboard() {
   document.getElementById('dropContainer').style.display = 'flex';
   document.getElementById('dashboard').classList.remove('active');
   document.getElementById('matchBadge').style.display = 'none';
+  document.getElementById('batteryBadge').style.display = 'none';
+  document.getElementById('eventBadge').style.display = 'none';
+  document.getElementById('saveStatus').style.display = 'none';
   document.getElementById('loadNewBtn').style.display = 'none';
+  document.getElementById('metaInputs').style.display = 'none';
+  const hintEl = document.querySelector('.drop-zone .hint');
+  if (hintEl) hintEl.style.display = 'block';
   document.querySelector('.drop-zone p').innerHTML = 'Drag & drop your <strong>.dslog</strong> and <strong>.dsevents</strong> files<br>or click to browse';
   if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
   if (modeChartInstance) { modeChartInstance.destroy(); modeChartInstance = null; }
