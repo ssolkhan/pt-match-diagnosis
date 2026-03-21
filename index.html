@@ -2564,7 +2564,8 @@ function renderDiagnostics(logData, eventData) {
 }
 
 function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (str === null || str === undefined) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 // ==================== CROSS-HIGHLIGHT: SEEK TIMELINE FROM ERRORS ====================
