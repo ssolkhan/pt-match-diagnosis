@@ -965,9 +965,12 @@ body {
   <!-- TAB: Power Distribution -->
   <div class="tab-panel" id="tab-power">
     <div id="powerTopConsumers" style="margin-bottom:16px;"></div>
-    <div class="chart-container" style="position:relative;height:350px;">
+    <div id="powerChannelToggles" style="margin-bottom:12px;"></div>
+    <div class="chart-controls" id="powerChartControls" style="display:flex;flex-wrap:wrap;align-items:center;margin-bottom:8px;"></div>
+    <div class="chart-container" style="position:relative;height:400px;" id="powerChartContainer">
       <canvas id="powerChart"></canvas>
     </div>
+    <div id="powerChannelTable" style="margin-top:16px;"></div>
   </div>
 
   <!-- TAB: Errors & Warnings -->
@@ -985,6 +988,13 @@ body {
   <div class="tab-panel" id="tab-history">
     <div id="matchHistoryContent">
       <div class="history-loading">Loading match history...</div>
+    </div>
+    <div id="batteryTrendContainer" style="display:none;margin-top:24px;">
+      <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;">🔋 Battery Trending Across Matches</div>
+      <div id="batteryTrendFilters" style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;"></div>
+      <div class="chart-container" style="position:relative;height:300px;">
+        <canvas id="batteryTrendChart"></canvas>
+      </div>
     </div>
   </div>
 
@@ -1074,14 +1084,20 @@ function parseDSLog(buffer) {
       let channelBitOffsets;
       if (pdpType === 33) {
         // REV PDH: 24 channels, skip first byte (0x1E header)
-        // 4 groups of 6 channels per 64-bit block
-        // Layout: 3×10bit, 2-bit pad, 3×10bit, 2-bit pad per group
+        // 4 groups of 6 channels per 8-byte (64-bit) block
+        // Each group: [ch0:10][ch1:10][ch2:10][pad:2] [ch3:10][ch4:10][ch5:10][pad:2]
         const pdpPayload = pdpBytes.slice(1); // skip 0x1E header byte
         channelBitOffsets = [];
         for (let g = 0; g < 4; g++) {
           const base = g * 64;
-          for (let j = 0; j < 3; j++) channelBitOffsets.push(base + j * 10);
-          for (let j = 0; j < 3; j++) channelBitOffsets.push(base + 32 + j * 10);
+          // First half: 3 channels × 10 bits + 2-bit pad = 32 bits
+          channelBitOffsets.push(base + 0);   // ch0
+          channelBitOffsets.push(base + 10);  // ch1
+          channelBitOffsets.push(base + 20);  // ch2
+          // Second half: 3 channels × 10 bits + 2-bit pad = 32 bits
+          channelBitOffsets.push(base + 32);  // ch3
+          channelBitOffsets.push(base + 42);  // ch4
+          channelBitOffsets.push(base + 52);  // ch5
         }
         for (let ch = 0; ch < 24; ch++) {
           pdpChannels[ch] = getLE10bit(pdpPayload, channelBitOffsets[ch]);
@@ -1164,6 +1180,30 @@ function parseDSEvents(buffer) {
         text: text,
         ...classifyEvent(text)
       });
+    }
+  }
+
+  // ---- Stack trace merging: fold consecutive "at ..." lines into previous event ----
+  for (let i = events.length - 1; i > 0; i--) {
+    const line = events[i].text.trim();
+    if (/^\s*at\s+/.test(line)) {
+      // Find the nearest preceding non-stack event
+      let target = i - 1;
+      while (target >= 0 && /^\s*at\s+/.test(events[target].text.trim())) {
+        target--;
+      }
+      if (target >= 0) {
+        // Append this stack line to the target event's text
+        events[target].text += '\n' + line;
+        events.splice(i, 1);
+      }
+    }
+  }
+  // Re-classify events that gained stack traces (their severity might change)
+  for (let i = 0; i < events.length; i++) {
+    if (events[i].text.includes('\nat ')) {
+      const reclassified = classifyEvent(events[i].text);
+      Object.assign(events[i], reclassified);
     }
   }
 
@@ -2636,6 +2676,10 @@ document.addEventListener('keydown', (e) => {
     if (container && container.classList.contains('chart-fullscreen')) {
       toggleChartFullscreen();
     }
+    const pwrContainer = document.getElementById('powerChartContainer');
+    if (pwrContainer && pwrContainer.classList.contains('chart-fullscreen')) {
+      togglePowerFullscreen();
+    }
   }
 });
 
@@ -2702,14 +2746,20 @@ function seekTimeline(time_s) {
 
 // ==================== RENDER POWER DISTRIBUTION TAB ====================
 let powerChartInstance = null;
+let powerActiveChannels = new Set();
+let powerSampled = [];
 
 function renderPower(logData) {
   const records = logData.records;
   const matchRecs = records.filter(r => r.mode === 'auto' || r.mode === 'teleop');
 
+  // Determine channel count: 24 for REV PDH, 16 for CTRE PDP
+  const hasPDH = records.some(r => r.pdpChannels && r.pdpChannels.length >= 24 && r.pdpChannels.slice(16).some(v => v > 0));
+  const numChannels = hasPDH ? 24 : 16;
+
   // Compute per-channel stats
   const channelStats = [];
-  for (let ch = 0; ch < 16; ch++) {
+  for (let ch = 0; ch < numChannels; ch++) {
     const values = matchRecs.map(r => r.pdpChannels ? r.pdpChannels[ch] : 0).filter(v => v > 0);
     const peak = values.length ? Math.max(...values) : 0;
     const avg = values.length ? values.reduce((s,v) => s+v, 0) / values.length : 0;
@@ -2720,96 +2770,281 @@ function renderPower(logData) {
   // Top 3 consumers by peak current
   const sorted = [...channelStats].filter(c => c.hasData).sort((a,b) => b.peak - a.peak);
   const top3 = sorted.slice(0, 3);
+  const pdLabel = hasPDH ? 'PDH' : 'PDP';
 
   document.getElementById('powerTopConsumers').innerHTML = `
     <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;">Top Current Consumers</div>
     <div class="top-consumers">
       ${top3.map((c, i) => `
         <div class="consumer-card" style="border-left-color: ${['var(--fire)','var(--yellow)','var(--blue)'][i]}">
-          <div class="ch-label">PDP Channel ${c.ch}</div>
+          <div class="ch-label">${pdLabel} Channel ${c.ch}</div>
           <div class="ch-value" style="color:${['var(--fire)','var(--yellow)','var(--blue)'][i]}">${c.peak.toFixed(1)}A peak</div>
-          <div class="ch-sub">Avg: ${c.avg.toFixed(1)}A</div>
+          <div class="ch-sub">Avg: ${c.avg.toFixed(1)}A · Total: ${c.total.toFixed(0)} A·s</div>
         </div>
       `).join('')}
       ${top3.length === 0 ? '<div style="padding:20px;color:var(--text-muted);">No PDP/PDH data available in this log.</div>' : ''}
     </div>
   `;
 
-  // Stacked area chart of active channels
+  // Channel toggle checkboxes — all channels
+  const chartColors = ['#C41E1E','#B8860B','#1E5FC4','#7C3AED','#059669','#D4453A','#FF6B35','#6366F1',
+                        '#EC4899','#14B8A6','#F97316','#8B5CF6','#06B6D4','#84CC16','#EF4444','#A855F7',
+                        '#0EA5E9','#22D3EE','#F59E0B','#10B981','#E11D48','#7C3AED','#0D9488','#DC2626'];
+
+  // Default: show channels with data (up to first 8 with data)
+  powerActiveChannels = new Set(sorted.slice(0, 8).map(c => c.ch));
+
+  function renderToggles() {
+    document.getElementById('powerChannelToggles').innerHTML = `
+      <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:6px;">Channel Visibility</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+        <button class="chart-toggle" id="pwrToggleAll" style="font-size:11px;padding:4px 10px;">All</button>
+        <button class="chart-toggle" id="pwrToggleNone" style="font-size:11px;padding:4px 10px;">None</button>
+        <button class="chart-toggle" id="pwrToggleActive" style="font-size:11px;padding:4px 10px;">Active Only</button>
+        <span style="width:8px;"></span>
+        ${channelStats.map(c => `
+          <label style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border:1px solid ${powerActiveChannels.has(c.ch) ? chartColors[c.ch % chartColors.length] : 'var(--border)'};border-radius:5px;font-size:11px;font-family:'JetBrains Mono',monospace;cursor:pointer;background:${powerActiveChannels.has(c.ch) ? chartColors[c.ch % chartColors.length] + '18' : 'var(--surface)'};opacity:${c.hasData ? 1 : 0.4};transition:all 0.15s;">
+            <input type="checkbox" data-ch="${c.ch}" ${powerActiveChannels.has(c.ch) ? 'checked' : ''} style="accent-color:${chartColors[c.ch % chartColors.length]};width:12px;height:12px;cursor:pointer;">
+            <span style="color:${powerActiveChannels.has(c.ch) ? chartColors[c.ch % chartColors.length] : 'var(--text-secondary)'};font-weight:${powerActiveChannels.has(c.ch) ? '600' : '400'};">Ch${c.ch}</span>
+          </label>
+        `).join('')}
+        <label style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border:1px solid ${powerActiveChannels.has(-1) ? '#1A1714' : 'var(--border)'};border-radius:5px;font-size:11px;font-family:'JetBrains Mono',monospace;cursor:pointer;background:${powerActiveChannels.has(-1) ? '#1A171418' : 'var(--surface)'};transition:all 0.15s;">
+          <input type="checkbox" data-ch="-1" ${powerActiveChannels.has(-1) ? 'checked' : ''} style="width:12px;height:12px;cursor:pointer;">
+          <span style="color:${powerActiveChannels.has(-1) ? '#1A1714' : 'var(--text-secondary)'};font-weight:${powerActiveChannels.has(-1) ? '600' : '400'};">Total</span>
+        </label>
+      </div>
+    `;
+
+    // Bind toggle events
+    document.querySelectorAll('#powerChannelToggles input[type=checkbox]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const ch = parseInt(cb.dataset.ch);
+        if (cb.checked) powerActiveChannels.add(ch);
+        else powerActiveChannels.delete(ch);
+        renderToggles();
+        updatePowerChart();
+      });
+    });
+    document.getElementById('pwrToggleAll')?.addEventListener('click', () => {
+      for (let ch = 0; ch < numChannels; ch++) powerActiveChannels.add(ch);
+      powerActiveChannels.add(-1);
+      renderToggles(); updatePowerChart();
+    });
+    document.getElementById('pwrToggleNone')?.addEventListener('click', () => {
+      powerActiveChannels.clear();
+      renderToggles(); updatePowerChart();
+    });
+    document.getElementById('pwrToggleActive')?.addEventListener('click', () => {
+      powerActiveChannels.clear();
+      channelStats.filter(c => c.hasData).forEach(c => powerActiveChannels.add(c.ch));
+      renderToggles(); updatePowerChart();
+    });
+  }
+
+  // Zoom controls (mirroring timeline's seek-zoom)
+  document.getElementById('powerChartControls').innerHTML =
+    '<button class="chart-toggle" id="pwrFullscreenBtn" style="margin-left:auto;" onclick="togglePowerFullscreen()">⛶ Fullscreen</button>';
+
+  // Downsample
   const step = Math.max(1, Math.floor(records.length / 1500));
-  const sampled = [];
-  for (let i = 0; i < records.length; i += step) sampled.push(records[i]);
-  const labels = sampled.map(r => r.time_s.toFixed(1));
+  powerSampled = [];
+  for (let i = 0; i < records.length; i += step) powerSampled.push(records[i]);
+  const labels = powerSampled.map(r => r.time_s.toFixed(1));
 
-  const activeChannels = channelStats.filter(c => c.hasData).slice(0, 8); // Top 8 for readability
-  const chartColors = ['#C41E1E','#B8860B','#1E5FC4','#7C3AED','#059669','#D4453A','#FF6B35','#6366F1'];
+  function buildPowerDatasets() {
+    const datasets = [];
+    const activeArr = [...powerActiveChannels].filter(ch => ch >= 0).sort((a,b) => a - b);
+    activeArr.forEach(ch => {
+      datasets.push({
+        label: 'Ch ' + ch,
+        data: powerSampled.map(r => r.pdpChannels ? r.pdpChannels[ch] : 0),
+        backgroundColor: chartColors[ch % chartColors.length] + '40',
+        borderColor: chartColors[ch % chartColors.length],
+        borderWidth: 1.2,
+        fill: true,
+        pointRadius: 0,
+        tension: 0.2
+      });
+    });
+    // Total current line
+    if (powerActiveChannels.has(-1)) {
+      datasets.push({
+        label: 'Total',
+        data: powerSampled.map(r => r.totalCurrent || 0),
+        borderColor: '#1A1714',
+        borderWidth: 2,
+        borderDash: [5, 3],
+        fill: false,
+        pointRadius: 0,
+        tension: 0.2
+      });
+    }
+    return datasets;
+  }
 
-  const datasets = activeChannels.map((c, idx) => ({
-    label: 'Ch ' + c.ch,
-    data: sampled.map(r => r.pdpChannels ? r.pdpChannels[c.ch] : 0),
-    backgroundColor: chartColors[idx % chartColors.length] + '40',
-    borderColor: chartColors[idx % chartColors.length],
-    borderWidth: 1,
-    fill: true,
-    pointRadius: 0,
-    tension: 0.2
-  }));
+  // Mode background plugin for power chart
+  const powerModeBgPlugin = {
+    id: 'powerModeBackground',
+    beforeDraw(chart) {
+      const ctx = chart.ctx;
+      const yScale = chart.scales.y;
+      if (!yScale) return;
+      const meta = chart.getDatasetMeta(0);
+      if (!meta || !meta.data || !meta.data.length) return;
+      let prevMode = powerSampled[0]?.mode;
+      let bandStart = 0;
+      for (let i = 1; i <= powerSampled.length; i++) {
+        const mode = i < powerSampled.length ? powerSampled[i].mode : null;
+        if (mode !== prevMode || i === powerSampled.length) {
+          const x1 = meta.data[bandStart]?.x ?? chart.scales.x.left;
+          const x2 = meta.data[Math.min(i - 1, meta.data.length - 1)]?.x ?? chart.scales.x.right;
+          let color = 'rgba(229,231,235,0.25)';
+          if (prevMode === 'auto') color = 'rgba(59,130,246,0.12)';
+          else if (prevMode === 'teleop') color = 'rgba(34,197,94,0.10)';
+          else if (prevMode === 'disabled') color = 'rgba(156,163,175,0.10)';
+          ctx.fillStyle = color;
+          ctx.fillRect(x1, yScale.top, x2 - x1, yScale.bottom - yScale.top);
+          prevMode = mode;
+          bandStart = i;
+        }
+      }
+    }
+  };
 
-  // Add total current line
-  datasets.push({
-    label: 'Total',
-    data: sampled.map(r => r.totalCurrent || 0),
-    borderColor: '#1A1714',
-    borderWidth: 2,
-    borderDash: [5, 3],
-    fill: false,
-    pointRadius: 0,
-    tension: 0.2
-  });
+  function updatePowerChart() {
+    const datasets = buildPowerDatasets();
+    if (powerChartInstance) {
+      powerChartInstance.data.datasets = datasets;
+      powerChartInstance.update();
+    }
+  }
 
   if (powerChartInstance) powerChartInstance.destroy();
   powerChartInstance = new Chart(document.getElementById('powerChart'), {
     type: 'line',
-    data: { labels, datasets },
+    data: { labels, datasets: buildPowerDatasets() },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
-      onHover: (event, elements) => {
-        if (elements.length > 0 && parsedEvents) {
-          const idx = elements[0].index;
-          const t = sampled[idx].time_s;
-          // Auto-scroll error list if errors tab has been rendered
-          const errorItems = document.querySelectorAll('.error-item');
-          let closestItem = null;
-          let closestDist = Infinity;
-          errorItems.forEach(item => {
-            const timeEl = item.querySelector('.error-time');
-            if (timeEl) {
-              const itemTime = parseFloat(timeEl.textContent);
-              if (!isNaN(itemTime) && Math.abs(itemTime - t) < closestDist) {
-                closestDist = Math.abs(itemTime - t);
-                closestItem = item;
-              }
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          titleFont: { family: 'JetBrains Mono', size: 11 },
+          bodyFont: { family: 'JetBrains Mono', size: 10 },
+          callbacks: {
+            title: (items) => {
+              const idx = items[0]?.dataIndex;
+              if (idx === undefined) return '';
+              const r = powerSampled[idx];
+              return `${r.time_s.toFixed(1)}s — ${r.mode.toUpperCase()} — Total: ${(r.totalCurrent||0).toFixed(1)}A`;
             }
-          });
-          // Highlight closest error
-          errorItems.forEach(item => item.classList.remove('highlighted'));
-          if (closestItem && closestDist < 5) {
-            closestItem.classList.add('highlighted');
           }
         }
-      },
-      plugins: {
-        legend: { position: 'top', labels: { font: { family: 'Outfit', size: 11 }, usePointStyle: true, pointStyle: 'line' } },
-        tooltip: { titleFont: { family: 'JetBrains Mono', size: 11 }, bodyFont: { family: 'JetBrains Mono', size: 10 } }
       },
       scales: {
         x: { title: { display: true, text: 'Time (s)', font: { family: 'JetBrains Mono', size: 11 } }, ticks: { font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 20 } },
         y: { title: { display: true, text: 'Current (A)', font: { family: 'JetBrains Mono', size: 11 } }, min: 0, ticks: { font: { family: 'JetBrains Mono', size: 10 } }, grid: { color: 'rgba(0,0,0,0.05)' } }
       }
-    }
+    },
+    plugins: [powerModeBgPlugin]
   });
+
+  // Peak/Avg table for ALL channels with top consumers highlighted
+  const topPeakChs = new Set(sorted.slice(0, 3).map(c => c.ch));
+  document.getElementById('powerChannelTable').innerHTML = `
+    <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">All Channel Statistics</div>
+    <div style="overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius);">
+      <table class="history-table" style="min-width:600px;">
+        <thead>
+          <tr>
+            <th style="width:80px;">Channel</th>
+            <th style="width:90px;">Peak (A)</th>
+            <th style="width:90px;">Avg (A)</th>
+            <th style="width:110px;">Energy (A·s)</th>
+            <th style="width:80px;">Status</th>
+            <th>Peak Bar</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${channelStats.map(c => {
+            const isTop = topPeakChs.has(c.ch);
+            const barPct = sorted.length && sorted[0].peak > 0 ? (c.peak / sorted[0].peak * 100) : 0;
+            const color = chartColors[c.ch % chartColors.length];
+            return `
+              <tr style="${isTop ? 'background:var(--red-bg);' : ''}">
+                <td style="font-weight:600;color:${color};">${pdLabel} Ch ${c.ch}</td>
+                <td style="${isTop ? 'color:var(--red);font-weight:700;' : ''}">${c.peak.toFixed(1)}</td>
+                <td>${c.avg.toFixed(1)}</td>
+                <td>${c.total.toFixed(1)}</td>
+                <td>${c.hasData ? '<span style="color:var(--green);font-weight:600;">Active</span>' : '<span style="color:var(--text-muted);">Idle</span>'}</td>
+                <td>
+                  <div style="height:14px;background:var(--surface-alt);border-radius:3px;overflow:hidden;border:1px solid var(--border);">
+                    <div style="height:100%;width:${barPct}%;background:${color};border-radius:3px;transition:width 0.5s;"></div>
+                  </div>
+                </td>
+              </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  renderToggles();
+}
+
+// Power chart fullscreen
+function togglePowerFullscreen() {
+  const container = document.getElementById('powerChartContainer');
+  const btn = document.getElementById('pwrFullscreenBtn');
+  if (container.classList.contains('chart-fullscreen')) {
+    container.classList.remove('chart-fullscreen');
+    btn.textContent = '⛶ Fullscreen';
+    container.style.height = '400px';
+  } else {
+    container.classList.add('chart-fullscreen');
+    btn.textContent = '✕ Exit Fullscreen';
+  }
+  setTimeout(() => { if (powerChartInstance) powerChartInstance.resize(); }, 100);
+}
+
+// Power chart zoom — reuse the same seek pattern as timeline
+function seekPowerChart(time_s) {
+  // Switch to power tab
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelector('[data-tab="power"]').classList.add('active');
+  document.getElementById('tab-power').classList.add('active');
+
+  if (powerNeedsRender && parsedLog) {
+    renderPower(parsedLog);
+    powerNeedsRender = false;
+  }
+
+  setTimeout(() => {
+    if (!powerChartInstance) return;
+    const xScale = powerChartInstance.options.scales.x;
+    xScale.min = Math.max(0, time_s - 5).toFixed(1);
+    xScale.max = (time_s + 5).toFixed(1);
+    powerChartInstance.update();
+
+    // Add reset zoom button
+    const controls = document.getElementById('powerChartControls');
+    if (!document.getElementById('pwrResetZoomBtn')) {
+      const btn = document.createElement('button');
+      btn.id = 'pwrResetZoomBtn';
+      btn.className = 'chart-toggle active';
+      btn.textContent = '↩ Reset Zoom';
+      btn.style.marginRight = '8px';
+      btn.onclick = () => {
+        delete powerChartInstance.options.scales.x.min;
+        delete powerChartInstance.options.scales.x.max;
+        powerChartInstance.update();
+        btn.remove();
+      };
+      controls.insertBefore(btn, controls.firstChild);
+    }
+  }, 150);
 }
 
 // ==================== RENDER PIT BRIEF TAB ====================
@@ -3049,10 +3284,141 @@ function loadMatchHistory() {
       }
 
       render();
+
+      // ---- Battery Trending Chart ----
+      renderBatteryTrend(allMatches);
     })
     .catch(err => {
       container.innerHTML = '<div class="history-loading">Failed to load match history.<br><span style="font-size:12px;color:var(--text-muted);">' + escapeHtml(err.message) + '</span></div>';
     });
+}
+
+let batteryTrendChartInstance = null;
+
+function renderBatteryTrend(allMatches) {
+  const trendContainer = document.getElementById('batteryTrendContainer');
+  if (!allMatches || allMatches.length < 2) {
+    trendContainer.style.display = 'none';
+    return;
+  }
+  trendContainer.style.display = 'block';
+
+  // Group matches by Battery ID
+  const batteryGroups = {};
+  const chronological = [...allMatches].reverse(); // oldest first
+  chronological.forEach(m => {
+    const bid = m['Battery ID'] || 'Unknown';
+    if (!batteryGroups[bid]) batteryGroups[bid] = [];
+    batteryGroups[bid].push(m);
+  });
+
+  const batteryIds = Object.keys(batteryGroups).filter(b => batteryGroups[b].length >= 1);
+  const trendColors = ['#C41E1E','#1E5FC4','#059669','#7C3AED','#B8860B','#D4453A','#FF6B35','#6366F1','#EC4899','#14B8A6'];
+
+  let trendMetric = 'Min Voltage';
+  const metrics = [
+    { key: 'Min Voltage', label: 'Min Voltage (V)', warn: 10 },
+    { key: 'Avg Voltage', label: 'Avg Voltage (V)', warn: 11.5 },
+    { key: 'Health Score', label: 'Health Score', warn: 50 },
+    { key: 'Battery Resistance mΩ', label: 'Resistance (mΩ)', warn: 25 }
+  ];
+
+  function renderTrendFilters() {
+    document.getElementById('batteryTrendFilters').innerHTML = metrics.map(m =>
+      `<button class="chart-toggle ${trendMetric === m.key ? 'active' : ''}" data-metric="${m.key}">${m.label}</button>`
+    ).join('');
+    document.querySelectorAll('#batteryTrendFilters .chart-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        trendMetric = btn.dataset.metric;
+        renderTrendFilters();
+        buildTrendChart();
+      });
+    });
+  }
+
+  function buildTrendChart() {
+    const metric = metrics.find(m => m.key === trendMetric);
+    // X-axis: match labels (sequential)
+    const maxLen = Math.max(...batteryIds.map(b => batteryGroups[b].length));
+    const labels = [];
+    for (let i = 0; i < maxLen; i++) labels.push('Match ' + (i + 1));
+
+    const datasets = batteryIds.map((bid, idx) => {
+      const matches = batteryGroups[bid];
+      const data = matches.map(m => {
+        const val = Number(m[trendMetric] || 0);
+        return val || null;
+      });
+      return {
+        label: bid,
+        data: data,
+        borderColor: trendColors[idx % trendColors.length],
+        backgroundColor: trendColors[idx % trendColors.length] + '20',
+        borderWidth: 2,
+        pointRadius: 4,
+        pointHitRadius: 8,
+        fill: false,
+        tension: 0.3,
+        spanGaps: true
+      };
+    });
+
+    // Add warning threshold line
+    if (metric.warn) {
+      datasets.push({
+        label: 'Warning Threshold',
+        data: labels.map(() => metric.warn),
+        borderColor: '#EF4444',
+        borderWidth: 1.5,
+        borderDash: [8, 4],
+        pointRadius: 0,
+        fill: false
+      });
+    }
+
+    if (batteryTrendChartInstance) batteryTrendChartInstance.destroy();
+    batteryTrendChartInstance = new Chart(document.getElementById('batteryTrendChart'), {
+      type: 'line',
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position: 'top', labels: { font: { family: 'Outfit', size: 12 }, usePointStyle: true, pointStyle: 'circle' } },
+          tooltip: {
+            titleFont: { family: 'JetBrains Mono', size: 11 },
+            bodyFont: { family: 'JetBrains Mono', size: 10 },
+            callbacks: {
+              afterBody: (items) => {
+                if (!items.length) return '';
+                const idx = items[0].dataIndex;
+                const dsIdx = items[0].datasetIndex;
+                if (dsIdx >= batteryIds.length) return '';
+                const bid = batteryIds[dsIdx];
+                const m = batteryGroups[bid][idx];
+                if (!m) return '';
+                const ts = m['Timestamp'];
+                const mt = m['Match Type'];
+                const mn = m['Match Number'];
+                const parts = [];
+                if (ts) try { parts.push(new Date(ts).toLocaleDateString()); } catch(e) {}
+                if (mt || mn) parts.push((mt || '') + ' ' + (mn || ''));
+                return parts.length ? parts.join(' · ') : '';
+              }
+            }
+          }
+        },
+        scales: {
+          x: { title: { display: true, text: 'Match Sequence', font: { family: 'JetBrains Mono', size: 11 } }, ticks: { font: { family: 'JetBrains Mono', size: 10 } } },
+          y: { title: { display: true, text: metric.label, font: { family: 'JetBrains Mono', size: 11 } }, ticks: { font: { family: 'JetBrains Mono', size: 10 } }, grid: { color: 'rgba(0,0,0,0.05)' } }
+        }
+      }
+    });
+  }
+
+  renderTrendFilters();
+  buildTrendChart();
 }
 
 // Drop zone events
@@ -3130,6 +3496,9 @@ function resetDashboard() {
   if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
   if (modeChartInstance) { modeChartInstance.destroy(); modeChartInstance = null; }
   if (powerChartInstance) { powerChartInstance.destroy(); powerChartInstance = null; }
+  if (batteryTrendChartInstance) { batteryTrendChartInstance.destroy(); batteryTrendChartInstance = null; }
+  const trendContainer = document.getElementById('batteryTrendContainer');
+  if (trendContainer) trendContainer.style.display = 'none';
 }
 </script>
 </body>
