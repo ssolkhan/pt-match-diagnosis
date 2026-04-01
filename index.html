@@ -1053,28 +1053,57 @@ function parseDSLog(buffer) {
     else if (robotTele) mode = 'teleop';
     else if (robotDisabled) mode = 'disabled';
 
-    // Parse PDP/PDH total current from remaining record bytes
     // Parse PDP/PDH per-channel currents
     let totalCurrent = 0;
-    const pdpChannels = new Float32Array(16);
+    const pdpChannels = new Float32Array(24);
     const pdpBase = offset + 10;
-    const pdpType = version === 4 ? view.getUint8(pdpBase + 2) : 0;
+    const pdpType = version === 4 ? view.getUint8(pdpBase + 3) : 0; // 25=CTRE PDP, 33=REV PDH, 0=none
     if (pdpType > 0) {
       const pdpDataStart = version === 4 ? pdpBase + 4 : pdpBase;
       const pdpBytes = new Uint8Array(buffer, pdpDataStart, version === 4 ? 33 : 25);
-      function get10bit(bytes, bitOffset) {
+
+      // Little-endian 10-bit extraction
+      function getLE10bit(bytes, bitOffset) {
         const byteIdx = Math.floor(bitOffset / 8);
-        const bitShift = bitOffset % 8;
-        if (byteIdx + 1 >= bytes.length) return 0;
-        const val = (bytes[byteIdx] << 8 | bytes[byteIdx + 1]) >> (6 - bitShift);
-        return (val & 0x3FF) / 8.0;
+        const bitPos = bitOffset % 8;
+        if (byteIdx + 2 >= bytes.length) return 0;
+        const raw = bytes[byteIdx] | (bytes[byteIdx+1] << 8) | (bytes[byteIdx+2] << 16);
+        return ((raw >> bitPos) & 0x3FF) / 8.0;
       }
-      const channelBitOffsets = [8,18,28,38,48,58, 72,82,92,102,112,122, 136,146,156,166];
-      for (let ch = 0; ch < channelBitOffsets.length; ch++) {
-        const bo = channelBitOffsets[ch];
-        if (Math.floor(bo/8) + 1 < pdpBytes.length) {
-          pdpChannels[ch] = get10bit(pdpBytes, bo);
+
+      let channelBitOffsets;
+      if (pdpType === 33) {
+        // REV PDH: 24 channels, skip first byte (0x1E header)
+        // 4 groups of 6 channels per 64-bit block
+        // Layout: 3×10bit, 2-bit pad, 3×10bit, 2-bit pad per group
+        const pdpPayload = pdpBytes.slice(1); // skip 0x1E header byte
+        channelBitOffsets = [];
+        for (let g = 0; g < 4; g++) {
+          const base = g * 64;
+          for (let j = 0; j < 3; j++) channelBitOffsets.push(base + j * 10);
+          for (let j = 0; j < 3; j++) channelBitOffsets.push(base + 32 + j * 10);
+        }
+        for (let ch = 0; ch < 24; ch++) {
+          pdpChannels[ch] = getLE10bit(pdpPayload, channelBitOffsets[ch]);
           totalCurrent += pdpChannels[ch];
+        }
+      } else {
+        // CTRE PDP: 16 channels, big-endian 10-bit
+        // Original v3 layout: 3 groups of ~6 channels in 64-bit blocks
+        channelBitOffsets = [8,18,28,38,48,58, 72,82,92,102,112,122, 136,146,156,166];
+        function getBE10bit(bytes, bitOffset) {
+          const byteIdx = Math.floor(bitOffset / 8);
+          const bitShift = bitOffset % 8;
+          if (byteIdx + 1 >= bytes.length) return 0;
+          const val = (bytes[byteIdx] << 8 | bytes[byteIdx + 1]) >> (6 - bitShift);
+          return (val & 0x3FF) / 8.0;
+        }
+        for (let ch = 0; ch < channelBitOffsets.length; ch++) {
+          const bo = channelBitOffsets[ch];
+          if (Math.floor(bo/8) + 1 < pdpBytes.length) {
+            pdpChannels[ch] = getBE10bit(pdpBytes, bo);
+            totalCurrent += pdpChannels[ch];
+          }
         }
       }
     }
