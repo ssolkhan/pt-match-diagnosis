@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1301,8 +1300,17 @@ function runDiagnostics(logData, eventData) {
   const validPacketLoss = matchRecords.filter(r => r.packetLoss !== null);
   const maxPacketLoss = validPacketLoss.length ? Math.max(...validPacketLoss.map(r => r.packetLoss)) : 0;
   const avgPacketLoss = validPacketLoss.length ? validPacketLoss.reduce((s, r) => s + r.packetLoss, 0) / validPacketLoss.length : 0;
-  const validCan = matchRecords.filter(r => r.canUsage !== null);
-  const maxCan = validCan.length ? Math.max(...validCan.map(r => r.canUsage)) : 0;
+  // Filter CAN to stable match records only (exclude comms-flicker transients)
+  const validCan = matchRecords.filter((r, i) => r.canUsage !== null && r.canUsage < 0.70);
+  // Include >70% only if sustained (not a single-record spike)
+  const highCanSustained = matchRecords.filter((r, i, arr) => {
+    if (r.canUsage === null || r.canUsage < 0.70) return false;
+    const prev = i > 0 ? arr[i-1] : null;
+    const next = i < arr.length-1 ? arr[i+1] : null;
+    return (prev && prev.canUsage !== null && prev.canUsage > 0.30) && (next && next.canUsage !== null && next.canUsage > 0.30);
+  });
+  const allValidCan = [...validCan, ...highCanSustained];
+  const maxCan = allValidCan.length ? Math.max(...allValidCan.map(r => r.canUsage)) : 0;
   const totalDuration = records.length * 0.02;
   const autoDuration = autoRecords.length * 0.02;
   const teleopDuration = teleopRecords.length * 0.02;
@@ -1954,7 +1962,7 @@ function renderDashboard(logData, eventData, meta) {
   let modeFlips = 0;
   for (let i = 1; i < records.length; i++) if (records[i].mode !== records[i-1].mode) modeFlips++;
   const flickerRate = modeFlips / (records.length * 0.02 || 1);
-  const validCan3 = matchRecs.filter(r => r.canUsage !== null);
+  const validCan3 = matchRecs.filter(r => r.canUsage !== null && r.canUsage < 0.995);
   const maxCan = validCan3.length ? Math.max(...validCan3.map(r => r.canUsage)) : 0;
   const avgCpu = matchRecs.length ? matchRecs.reduce((s,r) => s + r.rioCpu * 100, 0) / matchRecs.length : 0;
   const brownouts = records.filter(r => r.brownout).length;
@@ -2016,7 +2024,7 @@ function renderSummary(logData, eventData) {
   const maxV = validV.length ? Math.max(...validV.map(r => r.voltage)) : 0;
   const validLoss2 = matchRecs.filter(r => r.packetLoss !== null);
   const maxLoss = validLoss2.length ? Math.max(...validLoss2.map(r => r.packetLoss)) : 0;
-  const validCan4 = matchRecs.filter(r => r.canUsage !== null);
+  const validCan4 = matchRecs.filter(r => r.canUsage !== null && r.canUsage < 0.995);
   const maxCan = validCan4.length ? Math.max(...validCan4.map(r => r.canUsage)) : 0;
   const brownouts = records.filter(r => r.brownout).length;
   const critErrors = eventData.events.filter(e => e.severity === 'critical').length;
@@ -2195,7 +2203,7 @@ function renderTimeline(logData, eventData) {
       switch (name) {
         case 'Voltage': return r.voltage;
         case 'Packet Loss': return r.packetLoss !== null ? r.packetLoss * 100 : null;
-        case 'CAN Usage': return r.canUsage !== null ? r.canUsage * 100 : null;
+        case 'CAN Usage': return (r.canUsage !== null && r.canUsage < 0.995) ? r.canUsage * 100 : null;
         case 'roboRIO CPU': return r.rioCpu * 100;
         case 'Trip Time': return r.tripTime;
         default: return null;
