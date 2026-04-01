@@ -1027,7 +1027,8 @@ function parseDSLog(buffer) {
   for (let i = 0; i < numRecords; i++) {
     const offset = headerSize + i * recordSize;
     const tripTime = view.getUint8(offset) / 2.0;
-    const packetLoss = 0.04 * view.getUint8(offset + 1);
+    const packetLossRaw = view.getUint8(offset + 1);
+    const packetLoss = packetLossRaw === 0xFF ? null : 0.04 * packetLossRaw; // fraction 0.0-1.0
     const voltageRaw = view.getUint16(offset + 2);
     const voltage = voltageRaw === 0xFFFF ? null : voltageRaw / 256.0;
     const rioCpu = 0.01 * view.getUint8(offset + 4) / 2.0;
@@ -1295,8 +1296,9 @@ function runDiagnostics(logData, eventData) {
   const validVoltages = matchRecords.filter(r => r.voltage !== null);
   const minVoltage = validVoltages.length ? Math.min(...validVoltages.map(r => r.voltage)) : 99;
   const avgVoltage = validVoltages.length ? validVoltages.reduce((s, r) => s + r.voltage, 0) / validVoltages.length : 0;
-  const maxPacketLoss = matchRecords.length ? Math.max(...matchRecords.map(r => r.packetLoss)) : 0;
-  const avgPacketLoss = matchRecords.length ? matchRecords.reduce((s, r) => s + r.packetLoss, 0) / matchRecords.length : 0;
+  const validPacketLoss = matchRecords.filter(r => r.packetLoss !== null);
+  const maxPacketLoss = validPacketLoss.length ? Math.max(...validPacketLoss.map(r => r.packetLoss)) : 0;
+  const avgPacketLoss = validPacketLoss.length ? validPacketLoss.reduce((s, r) => s + r.packetLoss, 0) / validPacketLoss.length : 0;
   const maxCan = matchRecords.length ? Math.max(...matchRecords.map(r => r.canUsage)) : 0;
   const totalDuration = records.length * 0.02;
   const autoDuration = autoRecords.length * 0.02;
@@ -1432,17 +1434,17 @@ function runDiagnostics(logData, eventData) {
     diagnostics.investigate.push({
       title: '📡 Communications Flickering',
       body: `Connection was unstable with ${commsFlickerRate.toFixed(1)} mode changes/second. Some packet loss is normal at events, but this level can cause delayed or missed commands.`,
-      evidence: `Mode transitions: ${modeFlips} | Avg packet loss: ${avgPacketLoss.toFixed(2)}% | Max: ${maxPacketLoss.toFixed(1)}%`,
+      evidence: `Mode transitions: ${modeFlips} | Avg packet loss: ${(avgPacketLoss * 100).toFixed(1)}% | Max: ${(maxPacketLoss * 100).toFixed(1)}%`,
       action: 'Check all network connections. Ensure radio firmware is up to date. At events, this may be field-side interference — note which field position.'
     });
   }
 
   // ---- RULE 7: Packet loss ----
-  if (maxPacketLoss > 5.0 && commsFlickerRate <= 2.0) {
+  if (maxPacketLoss > 0.05 && commsFlickerRate <= 2.0) {
     diagnostics.investigate.push({
       title: '📦 Elevated Packet Loss',
-      body: `Packet loss peaked at ${maxPacketLoss.toFixed(1)}% during the match. Above 5% you'll notice delayed joystick inputs and choppy robot response.`,
-      evidence: `Max loss: ${maxPacketLoss.toFixed(1)}% | Avg: ${avgPacketLoss.toFixed(2)}%`,
+      body: `Packet loss peaked at ${(maxPacketLoss * 100).toFixed(1)}% during the match. Above 5% you'll notice delayed joystick inputs and choppy robot response.`,
+      evidence: `Max loss: ${(maxPacketLoss * 100).toFixed(1)}% | Avg: ${(avgPacketLoss * 100).toFixed(2)}%`,
       action: 'Check radio signal strength. At events, try to note if loss correlates with specific field positions. Ensure radio antennas are unobstructed.'
     });
   }
@@ -1782,14 +1784,14 @@ function runDiagnostics(logData, eventData) {
   // ---- RULE 28: Stationary Packet Loss (RF Interference) ----
   // If packet loss is high but robot isn't moving (no mode activity), it's environmental
   const disabledHighLoss = records.filter(r =>
-    r.mode === 'disabled' && r.packetLoss > 5 && r.voltage !== null
+    r.mode === 'disabled' && r.packetLoss !== null && r.packetLoss > 0.05 && r.voltage !== null
   );
   if (disabledHighLoss.length > 25) { // >0.5s of high loss while disabled
     diagnostics.investigate.push({
       time_s: disabledHighLoss[0].time_s,
       title: '📶 Network Instability While Stationary',
       body: `Packet loss exceeded 5% for ${(disabledHighLoss.length * 0.02).toFixed(1)}s while the robot was disabled/stationary. Since no motors were running, this indicates an environmental RF issue, not a robot-induced problem.`,
-      evidence: `High-loss records while disabled: ${disabledHighLoss.length} (${(disabledHighLoss.length * 0.02).toFixed(1)}s) | Peak loss: ${Math.max(...disabledHighLoss.map(r => r.packetLoss)).toFixed(1)}%`,
+      evidence: `High-loss records while disabled: ${disabledHighLoss.length} (${(disabledHighLoss.length * 0.02).toFixed(1)}s) | Peak loss: ${(Math.max(...disabledHighLoss.map(r => r.packetLoss)) * 100).toFixed(1)}%`,
       action: 'Likely RF interference or loose radio power cable. Check radio barrel jack, Ethernet connections, and antenna placement. Note your field position — some spots have worse interference.'
     });
   }
@@ -1832,11 +1834,11 @@ function runDiagnostics(logData, eventData) {
     });
   }
 
-  if (maxPacketLoss <= 2.0 && commsFlickerRate < 0.5) {
+  if (maxPacketLoss <= 0.02 && commsFlickerRate < 0.5) {
     diagnostics.monitor.push({
       title: '✅ Communications Stable',
-      body: `Packet loss peaked at ${maxPacketLoss.toFixed(1)}% with stable connection. Network performance is good.`,
-      evidence: `Max loss: ${maxPacketLoss.toFixed(1)}% | Mode changes/s: ${commsFlickerRate.toFixed(2)}`
+      body: `Packet loss peaked at ${(maxPacketLoss * 100).toFixed(1)}% with stable connection. Network performance is good.`,
+      evidence: `Max loss: ${(maxPacketLoss * 100).toFixed(1)}% | Mode changes/s: ${commsFlickerRate.toFixed(2)}`
     });
   }
 
@@ -1871,7 +1873,7 @@ function runDiagnostics(logData, eventData) {
 
   // ---- GREEN: Radio Link Quality ----
   const avgTripTime = matchRecords.length ? matchRecords.reduce((s,r) => s + r.tripTime, 0) / matchRecords.length : 999;
-  const highLossRecords = matchRecords.filter(r => r.packetLoss > 1.0);
+  const highLossRecords = matchRecords.filter(r => r.packetLoss !== null && r.packetLoss > 0.01);
   if (avgTripTime < 10 && highLossRecords.length === 0 && matchRecords.length > 0) {
     diagnostics.monitor.push({
       title: '✅ Radio Link Quality Excellent',
@@ -1943,7 +1945,8 @@ function renderDashboard(logData, eventData, meta) {
   const validV = matchRecs.filter(r => r.voltage !== null);
   const minV = validV.length ? Math.min(...validV.map(r => r.voltage)) : 0;
   const avgV = validV.length ? validV.reduce((s,r) => s + r.voltage, 0) / validV.length : 0;
-  const maxLoss = matchRecs.length ? Math.max(...matchRecs.map(r => r.packetLoss)) : 0;
+  const validLoss1 = matchRecs.filter(r => r.packetLoss !== null);
+  const maxLoss = validLoss1.length ? Math.max(...validLoss1.map(r => r.packetLoss)) : 0;
   const avgTrip = matchRecs.length ? matchRecs.reduce((s,r) => s + r.tripTime, 0) / matchRecs.length : 0;
   let modeFlips = 0;
   for (let i = 1; i < records.length; i++) if (records[i].mode !== records[i-1].mode) modeFlips++;
@@ -1960,7 +1963,7 @@ function renderDashboard(logData, eventData, meta) {
   let health = 100;
   if (minV < 8) health -= 40; else if (minV < 10) health -= 25; else if (minV < 11) health -= 10;
   if (brownouts > 0) health -= 20;
-  if (maxLoss > 10) health -= 15; else if (maxLoss > 5) health -= 8;
+  if (maxLoss > 0.10) health -= 15; else if (maxLoss > 0.05) health -= 8;
   if (critErrors > 3) health -= 15; else if (critErrors > 0) health -= 8;
   if (autoRecs.length * 0.02 < 5 && autoRecs.length > 0) health -= 10;
   if (matchRecs.length === 0) health = 5;
@@ -1982,7 +1985,7 @@ function renderDashboard(logData, eventData, meta) {
     healthScore: health,
     minVoltage: +minV.toFixed(2),
     avgVoltage: +avgV.toFixed(2),
-    maxPacketLoss: +maxLoss.toFixed(1),
+    maxPacketLoss: +(maxLoss * 100).toFixed(1),
     avgTripTime: +avgTrip.toFixed(1),
     commsFlickerRate: +flickerRate.toFixed(1),
     peakCanUsage: +(maxCan * 100).toFixed(1),
@@ -2007,7 +2010,8 @@ function renderSummary(logData, eventData) {
   const minV = validV.length ? Math.min(...validV.map(r => r.voltage)) : 0;
   const avgV = validV.length ? validV.reduce((s, r) => s + r.voltage, 0) / validV.length : 0;
   const maxV = validV.length ? Math.max(...validV.map(r => r.voltage)) : 0;
-  const maxLoss = matchRecs.length ? Math.max(...matchRecs.map(r => r.packetLoss)) : 0;
+  const validLoss2 = matchRecs.filter(r => r.packetLoss !== null);
+  const maxLoss = validLoss2.length ? Math.max(...validLoss2.map(r => r.packetLoss)) : 0;
   const maxCan = matchRecs.length ? Math.max(...matchRecs.map(r => r.canUsage)) : 0;
   const brownouts = records.filter(r => r.brownout).length;
   const critErrors = eventData.events.filter(e => e.severity === 'critical').length;
@@ -2098,7 +2102,7 @@ function renderSummary(logData, eventData) {
 
   // Stat cards
   const vClass = minV < 10 ? 'danger' : minV < 11 ? 'warning' : 'good';
-  const lossClass = maxLoss > 5 ? 'warning' : 'good';
+  const lossClass = maxLoss > 0.05 ? 'warning' : 'good';
   const canClass = maxCan > 0.7 ? 'warning' : 'good';
 
   document.getElementById('summaryGrid').innerHTML = `
@@ -2109,7 +2113,7 @@ function renderSummary(logData, eventData) {
     </div>
     <div class="stat-card ${lossClass}">
       <div class="label">Peak Packet Loss</div>
-      <div class="value">${maxLoss.toFixed(1)}%</div>
+      <div class="value">${(maxLoss * 100).toFixed(1)}%</div>
       <div class="sub">During match play</div>
     </div>
     <div class="stat-card ${canClass}">
@@ -2185,7 +2189,7 @@ function renderTimeline(logData, eventData) {
     return sampled.map(r => {
       switch (name) {
         case 'Voltage': return r.voltage;
-        case 'Packet Loss': return r.packetLoss;
+        case 'Packet Loss': return r.packetLoss !== null ? r.packetLoss * 100 : null;
         case 'CAN Usage': return r.canUsage * 100;
         case 'roboRIO CPU': return r.rioCpu * 100;
         case 'Trip Time': return r.tripTime;
