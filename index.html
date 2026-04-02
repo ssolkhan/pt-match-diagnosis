@@ -975,6 +975,7 @@ body {
 
   <!-- TAB: Errors & Warnings -->
   <div class="tab-panel" id="tab-errors">
+    <div id="canSummaryBanner"></div>
     <div class="error-filters" id="errorFilters"></div>
     <div class="error-list" id="errorList"></div>
   </div>
@@ -1232,6 +1233,32 @@ function classifyEvent(text) {
     return { severity: 'info', category: 'Code', title: 'Subsystem Init', noise: true };
   if (/^\s*at\s+/.test(text) || /^\s*$/.test(text))
     return { severity: 'info', category: 'Code', title: 'Stack Trace Fragment', noise: true };
+  // Robot code telemetry prints (e.g. [SHOOT], [INTAKE], [ARM], etc.)
+  if (/\[(?:SHOOT|INTAKE|ARM|CLIMB|DRIVE|ELEVATOR|WRIST|TURRET|INDEX|FEEDER|AMP)\]/i.test(text))
+    return { severity: 'info', category: 'Code', title: 'Robot Telemetry', noise: true };
+  // NetworkTables connection chatter
+  if (lower.includes('nt:') && (lower.includes('connection') || lower.includes('connected') || lower.includes('client')))
+    return { severity: 'info', category: 'System', title: 'NetworkTables Connection', noise: true };
+  // CommandScheduler loop overrun (captured separately as Rule 23, noise here)
+  if (lower.includes('commandscheduler loop overrun') || lower.includes('commandscheduler loop time'))
+    return { severity: 'info', category: 'Code', title: 'CommandScheduler Overrun', noise: true };
+  // SmartDashboard/subsystem periodic timing
+  if (/\w+\.periodic\(\):\s*[\d.]+s/i.test(text))
+    return { severity: 'info', category: 'Code', title: 'Subsystem Periodic Timing', noise: true };
+  if (lower.includes('smartdashboard.updatevalues'))
+    return { severity: 'info', category: 'Code', title: 'SmartDashboard Timing', noise: true };
+  // StatusLogger / log4j internal
+  if (lower.includes('statuslogger'))
+    return { severity: 'info', category: 'System', title: 'Logger Status', noise: true };
+  // Robot program startup banner
+  if (lower.includes('robot program start'))
+    return { severity: 'info', category: 'Code', title: 'Robot Program Startup', noise: true };
+  // Game-specific data
+  if (lower.includes('game specific data'))
+    return { severity: 'info', category: 'FMS', title: 'Game Specific Data', noise: true };
+  // Phoenix/CTRE info lines
+  if (/\bphoenix\b/.test(lower) && !lower.includes('error') && !lower.includes('fault'))
+    return { severity: 'info', category: 'System', title: 'Phoenix Status', noise: true };
 
   // ---- CRITICAL (true errors only) ----
   if (lower.includes('timed out') || lower.includes('timeout'))
@@ -1252,6 +1279,9 @@ function classifyEvent(text) {
     return { severity: 'warning', category: 'Comms', title: 'Ping Status Change' };
   if (lower.includes('not a spark max') || lower.includes('functionalities may not work'))
     return { severity: 'warning', category: 'CAN', title: 'CAN Device Mismatch' };
+  // CAN stale data / message not received
+  if (/message\s+\S*\s*not found/.test(lower) || lower.includes('stale') || lower.includes('rx too old'))
+    return { severity: 'warning', category: 'CAN', title: extractTitle(text, 'CAN Stale Data') };
   if (lower.includes('error') && lower.includes('can'))
     return { severity: 'warning', category: 'CAN', title: extractTitle(text, 'CAN Warning') };
   if (lower.includes('update') && (lower.includes('firmware') || lower.includes('radio')))
@@ -1801,7 +1831,7 @@ function runDiagnostics(logData, eventData) {
   const staleCanRegex = /CAN: Message ([\d]+) not found/;
   const staleCan = events.filter(e => {
     const l = e.text.toLowerCase();
-    return l.includes('message not found') || l.includes('stale') || l.includes('rx too old');
+    return /message\s+\S*\s*not found/.test(l) || l.includes('stale') || l.includes('rx too old');
   });
   // Check for burst: >3 occurrences within 1 second windows
   let staleBursts = 0;
@@ -2240,23 +2270,92 @@ function renderTimeline(logData, eventData) {
     sampled.push(records[i]);
   }
 
-  // Controls
-  const controls = ['Voltage', 'Packet Loss', 'CAN Usage', 'roboRIO CPU', 'Trip Time'];
+  // ---- Compute match phase boundaries ----
+  const firstAuto = sampled.find(r => r.mode === 'auto');
+  const firstTeleop = sampled.find(r => r.mode === 'teleop');
+  const lastAuto = [...sampled].reverse().find(r => r.mode === 'auto');
+  const lastTeleop = [...sampled].reverse().find(r => r.mode === 'teleop');
+  const firstEnabled = firstAuto || firstTeleop;
+  const lastEnabled = lastTeleop || lastAuto;
+
+  const matchStart = firstEnabled ? Math.max(0, firstEnabled.time_s - 5) : 0;
+  const matchEnd = lastEnabled ? lastEnabled.time_s + 5 : sampled[sampled.length - 1]?.time_s || 0;
+  const autoStart = firstAuto ? Math.max(0, firstAuto.time_s - 2) : null;
+  const autoEnd = lastAuto ? lastAuto.time_s + 2 : null;
+  const teleopStart = firstTeleop ? Math.max(0, firstTeleop.time_s - 2) : null;
+  const teleopEnd = lastTeleop ? lastTeleop.time_s + 2 : null;
+  const hasMatchData = firstEnabled !== undefined;
+
+  // Store boundaries globally for power chart reuse
+  window._matchBounds = { matchStart, matchEnd, autoStart, autoEnd, teleopStart, teleopEnd, hasMatchData };
+
+  // Controls: series toggles + zoom presets
+  const controlsSeries = ['Voltage', 'Packet Loss', 'CAN Usage', 'roboRIO CPU', 'Trip Time'];
   const active = { 'Voltage': true, 'Packet Loss': true, 'CAN Usage': false, 'roboRIO CPU': false, 'Trip Time': false };
   
-  document.getElementById('chartControls').innerHTML = controls.map(c =>
-    `<button class="chart-toggle ${active[c] ? 'active' : ''}" data-series="${c}">${c}</button>`
-  ).join('') + '<button class="chart-toggle" id="fullscreenBtn" style="margin-left:auto;" onclick="toggleChartFullscreen()">⛶ Fullscreen</button>';
+  const zoomPresets = [];
+  if (hasMatchData) zoomPresets.push({ id: 'match', label: '▶ Match Only', start: matchStart, end: matchEnd, active: true });
+  if (autoStart !== null) zoomPresets.push({ id: 'auto', label: '🔵 Auto', start: autoStart, end: autoEnd });
+  if (teleopStart !== null) zoomPresets.push({ id: 'teleop', label: '🟢 Teleop', start: teleopStart, end: teleopEnd });
+  zoomPresets.push({ id: 'full', label: '📏 Full Log', start: null, end: null, active: !hasMatchData });
 
-  document.querySelectorAll('.chart-toggle').forEach(btn => {
+  document.getElementById('chartControls').innerHTML =
+    controlsSeries.map(c =>
+      `<button class="chart-toggle ${active[c] ? 'active' : ''}" data-series="${c}">${c}</button>`
+    ).join('') +
+    '<span style="width:1px;height:24px;background:var(--border);margin:0 6px;"></span>' +
+    zoomPresets.map(z =>
+      `<button class="chart-toggle zoom-preset ${z.active ? 'active' : ''}" data-zoom="${z.id}" data-start="${z.start}" data-end="${z.end}">${z.label}</button>`
+    ).join('') +
+    '<button class="chart-toggle" id="fullscreenBtn" style="margin-left:auto;" onclick="toggleChartFullscreen()">⛶ Fullscreen</button>';
+
+  // Bind series toggles
+  document.querySelectorAll('#chartControls .chart-toggle[data-series]').forEach(btn => {
     btn.addEventListener('click', () => {
       btn.classList.toggle('active');
       updateChart();
     });
   });
 
+  // Bind zoom presets
+  document.querySelectorAll('#chartControls .zoom-preset').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#chartControls .zoom-preset').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const start = btn.dataset.start === 'null' ? undefined : parseFloat(btn.dataset.start);
+      const end = btn.dataset.end === 'null' ? undefined : parseFloat(btn.dataset.end);
+      applyTimelineZoom(start, end);
+      // Remove any seek-generated reset button
+      const resetBtn = document.getElementById('resetZoomBtn');
+      if (resetBtn) resetBtn.remove();
+    });
+  });
+
+  function applyTimelineZoom(start, end) {
+    if (!chartInstance) return;
+    if (start !== undefined && end !== undefined) {
+      chartInstance.options.scales.x.min = start.toFixed(1);
+      chartInstance.options.scales.x.max = end.toFixed(1);
+    } else {
+      delete chartInstance.options.scales.x.min;
+      delete chartInstance.options.scales.x.max;
+    }
+    chartInstance.update();
+    // Sync mode chart
+    if (modeChartInstance) {
+      if (start !== undefined && end !== undefined) {
+        modeChartInstance.options.scales.x.min = start.toFixed(1);
+        modeChartInstance.options.scales.x.max = end.toFixed(1);
+      } else {
+        delete modeChartInstance.options.scales.x.min;
+        delete modeChartInstance.options.scales.x.max;
+      }
+      modeChartInstance.update();
+    }
+  }
+
   function getActiveSeries() {
-    return Array.from(document.querySelectorAll('.chart-toggle.active')).map(b => b.dataset.series);
+    return Array.from(document.querySelectorAll('#chartControls .chart-toggle.active[data-series]')).map(b => b.dataset.series);
   }
 
   const colors = {
@@ -2336,6 +2435,12 @@ function renderTimeline(logData, eventData) {
     const hasOther = activeSeries.some(s => s !== 'Voltage');
 
     const scales = { x: { display: true, title: { display: true, text: 'Time (s)', font: { family: 'JetBrains Mono', size: 11 } }, ticks: { font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 20 } } };
+
+    // Auto-crop: apply initial zoom from active preset
+    if (hasMatchData && !scales.x._zoomOverride) {
+      scales.x.min = matchStart.toFixed(1);
+      scales.x.max = matchEnd.toFixed(1);
+    }
     
     if (hasVoltage) {
       scales.yVoltage = {
@@ -2369,8 +2474,13 @@ function renderTimeline(logData, eventData) {
   function updateChart() {
     const { datasets, scales } = buildChart();
     if (chartInstance) {
+      // Preserve current zoom state
+      const curMin = chartInstance.options.scales.x.min;
+      const curMax = chartInstance.options.scales.x.max;
       chartInstance.data.datasets = datasets;
       chartInstance.options.scales = scales;
+      if (curMin !== undefined) chartInstance.options.scales.x.min = curMin;
+      if (curMax !== undefined) chartInstance.options.scales.x.max = curMax;
       chartInstance.update();
     }
   }
@@ -2475,7 +2585,9 @@ function renderTimeline(logData, eventData) {
       },
       scales: {
         x: { display: true, ticks: { display: false }, grid: { display: false },
-          title: { display: true, text: 'Robot Mode:   🔵 Auto    🟢 Teleop    ⚫ Disabled    ⬜ Disconnected', font: { family: 'Outfit', size: 12 }, color: '#6B6560' }
+          title: { display: true, text: 'Robot Mode:   🔵 Auto    🟢 Teleop    ⚫ Disabled    ⬜ Disconnected', font: { family: 'Outfit', size: 12 }, color: '#6B6560' },
+          min: hasMatchData ? matchStart.toFixed(1) : undefined,
+          max: hasMatchData ? matchEnd.toFixed(1) : undefined
         },
         y: { display: false, max: 1 }
       }
@@ -2483,8 +2595,135 @@ function renderTimeline(logData, eventData) {
   });
 }
 
+function renderCanSummaryBanner(events) {
+  const banner = document.getElementById('canSummaryBanner');
+
+  // Collect CAN-category events
+  const canTimeouts = events.filter(e => e.category === 'CAN' && e.title.includes('Timeout'));
+  const canStale = events.filter(e => e.category === 'CAN' && e.title.includes('Stale'));
+  const canMismatch = events.filter(e => e.category === 'CAN' && e.title.includes('Mismatch'));
+  const canResetParams = events.filter(e => e.category === 'CAN' && e.title.includes('Reset'));
+
+  // Nothing CAN-related? Hide the banner
+  if (canTimeouts.length === 0 && canStale.length === 0 && canMismatch.length === 0 && canResetParams.length === 0) {
+    banner.innerHTML = '';
+    return;
+  }
+
+  // Extract device IDs from event text
+  function extractDeviceIds(evts) {
+    const ids = new Set();
+    evts.forEach(e => {
+      // Match patterns like "ID 20", "IDs: 20, 50", "CAN ID 12", "device 5"
+      const idMatches = e.text.matchAll(/(?:ID[s]?[:\s]+)([\d,\s]+)/gi);
+      for (const m of idMatches) {
+        m[1].split(/[,\s]+/).filter(s => /^\d+$/.test(s)).forEach(id => ids.add(id));
+      }
+      const devMatches = e.text.matchAll(/device\s+(\d+)/gi);
+      for (const m of devMatches) ids.add(m[1]);
+      // Match "Message 255 not found"
+      const msgMatch = e.text.match(/Message\s+(\d+)\s+not found/i);
+      if (msgMatch) ids.add(msgMatch[1]);
+    });
+    return [...ids].sort((a,b) => Number(a) - Number(b));
+  }
+
+  // Compute stale bursts (>3 in 1s window)
+  let staleBursts = 0;
+  if (canStale.length > 3) {
+    for (let i = 0; i < canStale.length - 3; i++) {
+      const w = canStale.filter(e => e.time_s >= canStale[i].time_s && e.time_s < canStale[i].time_s + 1.0);
+      if (w.length > 3) { staleBursts++; i += w.length - 1; }
+    }
+  }
+
+  let html = '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">';
+
+  // CAN Timeouts card
+  if (canTimeouts.length > 0) {
+    const ids = extractDeviceIds(canTimeouts);
+    const firstTime = canTimeouts.find(e => e.time_s !== undefined);
+    html += `
+      <div style="display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--red-bg);border:1px solid var(--red-border);border-left:5px solid var(--red);border-radius:var(--radius);cursor:pointer;" onclick="document.getElementById('canBannerTimeoutDetail').style.display = document.getElementById('canBannerTimeoutDetail').style.display === 'none' ? 'block' : 'none'">
+        <span style="font-size:22px;">🚨</span>
+        <div style="flex:1;">
+          <div style="font-size:14px;font-weight:700;color:var(--red);">CAN Timeouts: ${canTimeouts.length} event${canTimeouts.length > 1 ? 's' : ''}</div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">
+            ${ids.length > 0 ? 'Device IDs: <strong style="font-family:\'JetBrains Mono\',monospace;">' + ids.join(', ') + '</strong>' : 'Check wiring and device firmware'}
+            ${firstTime ? ' · First at <span style="font-family:\'JetBrains Mono\',monospace;">' + firstTime.time_s.toFixed(1) + 's</span>' : ''}
+          </div>
+        </div>
+        ${firstTime ? '<button class="seek-btn" onclick="event.stopPropagation(); seekTimeline(' + (firstTime.time_s || 0) + ')">📈 Seek</button>' : ''}
+      </div>
+      <div id="canBannerTimeoutDetail" style="display:none;padding:8px 18px 12px 40px;font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--text-secondary);line-height:1.7;background:var(--red-bg);border:1px solid var(--red-border);border-top:none;border-radius:0 0 var(--radius) var(--radius);margin-top:-10px;">
+        ${canTimeouts.slice(0, 5).map(e => '<div>• ' + escapeHtml(e.text.substring(0, 150)) + '</div>').join('')}
+        ${canTimeouts.length > 5 ? '<div style="color:var(--text-muted);">...and ' + (canTimeouts.length - 5) + ' more</div>' : ''}
+      </div>`;
+  }
+
+  // CAN Stale Data card
+  if (canStale.length > 0) {
+    const ids = extractDeviceIds(canStale);
+    const firstTime = canStale.find(e => e.time_s !== undefined);
+    const severity = staleBursts > 0 || canStale.length > 10 ? 'high' : 'low';
+    const bgColor = severity === 'high' ? 'var(--red-bg)' : 'var(--yellow-bg)';
+    const borderColor = severity === 'high' ? 'var(--red-border)' : 'var(--yellow-border)';
+    const accentColor = severity === 'high' ? 'var(--red)' : 'var(--yellow)';
+    html += `
+      <div style="display:flex;align-items:center;gap:12px;padding:14px 18px;background:${bgColor};border:1px solid ${borderColor};border-left:5px solid ${accentColor};border-radius:var(--radius);cursor:pointer;" onclick="document.getElementById('canBannerStaleDetail').style.display = document.getElementById('canBannerStaleDetail').style.display === 'none' ? 'block' : 'none'">
+        <span style="font-size:22px;">📡</span>
+        <div style="flex:1;">
+          <div style="font-size:14px;font-weight:700;color:${accentColor};">CAN Stale Data: ${canStale.length} event${canStale.length > 1 ? 's' : ''}${staleBursts > 0 ? ' (' + staleBursts + ' burst' + (staleBursts > 1 ? 's' : '') + ')' : ''}</div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">
+            ${ids.length > 0 ? 'Device IDs: <strong style="font-family:\'JetBrains Mono\',monospace;">' + ids.join(', ') + '</strong>' : 'Devices intermittently failing to respond'}
+            ${firstTime ? ' · First at <span style="font-family:\'JetBrains Mono\',monospace;">' + firstTime.time_s.toFixed(1) + 's</span>' : ''}
+          </div>
+        </div>
+        ${firstTime ? '<button class="seek-btn" onclick="event.stopPropagation(); seekTimeline(' + (firstTime.time_s || 0) + ')">📈 Seek</button>' : ''}
+      </div>
+      <div id="canBannerStaleDetail" style="display:none;padding:8px 18px 12px 40px;font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--text-secondary);line-height:1.7;background:${bgColor};border:1px solid ${borderColor};border-top:none;border-radius:0 0 var(--radius) var(--radius);margin-top:-10px;">
+        ${canStale.slice(0, 5).map(e => '<div>• ' + escapeHtml(e.text.substring(0, 150)) + '</div>').join('')}
+        ${canStale.length > 5 ? '<div style="color:var(--text-muted);">...and ' + (canStale.length - 5) + ' more</div>' : ''}
+      </div>`;
+  }
+
+  // CAN Device Mismatch card
+  if (canMismatch.length > 0) {
+    const ids = extractDeviceIds(canMismatch);
+    html += `
+      <div style="display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--red-bg);border:1px solid var(--red-border);border-left:5px solid var(--red);border-radius:var(--radius);">
+        <span style="font-size:22px;">🔧</span>
+        <div style="flex:1;">
+          <div style="font-size:14px;font-weight:700;color:var(--red);">CAN Device Mismatch: ${canMismatch.length} device${canMismatch.length > 1 ? 's' : ''}</div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">
+            ${ids.length > 0 ? 'CAN IDs: <strong style="font-family:\'JetBrains Mono\',monospace;">' + ids.join(', ') + '</strong> — code expects different hardware' : 'Code/hardware type mismatch detected'}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // CAN Reset Params
+  if (canResetParams.length > 0) {
+    html += `
+      <div style="display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--yellow-bg);border:1px solid var(--yellow-border);border-left:5px solid var(--yellow);border-radius:var(--radius);">
+        <span style="font-size:22px;">⚙️</span>
+        <div style="flex:1;">
+          <div style="font-size:14px;font-weight:700;color:var(--yellow);">CAN Reset Parameters: ${canResetParams.length} event${canResetParams.length > 1 ? 's' : ''}</div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">Devices taking too long to reset safe parameters</div>
+        </div>
+      </div>`;
+  }
+
+  // All-clear card if no CAN issues
+  html += '</div>';
+  banner.innerHTML = html;
+}
+
 function renderErrors(eventData) {
   const events = eventData.events;
+
+  // ---- CAN SUMMARY BANNER ----
+  renderCanSummaryBanner(events);
 
   // Dedup and group events
   const meaningful = [];
@@ -2699,6 +2938,9 @@ function seekTimeline(time_s) {
     if (!chartInstance || !chartInstance.data.labels) return;
     const labels = chartInstance.data.labels;
 
+    // Deactivate zoom presets
+    document.querySelectorAll('#chartControls .zoom-preset').forEach(b => b.classList.remove('active'));
+
     // Find closest data point
     let closest = 0;
     let minDist = Infinity;
@@ -2712,6 +2954,12 @@ function seekTimeline(time_s) {
     xScale.min = Math.max(0, time_s - 5).toFixed(1);
     xScale.max = (time_s + 5).toFixed(1);
     chartInstance.update();
+    // Sync mode chart
+    if (modeChartInstance) {
+      modeChartInstance.options.scales.x.min = xScale.min;
+      modeChartInstance.options.scales.x.max = xScale.max;
+      modeChartInstance.update();
+    }
 
     // Draw highlight and show tooltip
     setTimeout(() => {
@@ -2731,13 +2979,33 @@ function seekTimeline(time_s) {
       const btn = document.createElement('button');
       btn.id = 'resetZoomBtn';
       btn.className = 'chart-toggle active';
-      btn.textContent = '↩ Reset Zoom';
+      btn.textContent = '↩ Match View';
       btn.style.marginLeft = '12px';
       btn.onclick = () => {
-        delete chartInstance.options.scales.x.min;
-        delete chartInstance.options.scales.x.max;
+        // Return to match-only view
+        const bounds = window._matchBounds;
+        if (bounds && bounds.hasMatchData) {
+          chartInstance.options.scales.x.min = bounds.matchStart.toFixed(1);
+          chartInstance.options.scales.x.max = bounds.matchEnd.toFixed(1);
+          if (modeChartInstance) {
+            modeChartInstance.options.scales.x.min = bounds.matchStart.toFixed(1);
+            modeChartInstance.options.scales.x.max = bounds.matchEnd.toFixed(1);
+            modeChartInstance.update();
+          }
+        } else {
+          delete chartInstance.options.scales.x.min;
+          delete chartInstance.options.scales.x.max;
+          if (modeChartInstance) {
+            delete modeChartInstance.options.scales.x.min;
+            delete modeChartInstance.options.scales.x.max;
+            modeChartInstance.update();
+          }
+        }
         chartInstance.update();
         btn.remove();
+        // Re-activate match preset
+        const matchBtn = document.querySelector('#chartControls .zoom-preset[data-zoom="match"]');
+        if (matchBtn) matchBtn.classList.add('active');
       };
       document.getElementById('chartControls').appendChild(btn);
     }
@@ -2841,9 +3109,39 @@ function renderPower(logData) {
     });
   }
 
-  // Zoom controls (mirroring timeline's seek-zoom)
+  // Zoom controls with presets (reuse match bounds from timeline)
+  const bounds = window._matchBounds || {};
+  const pwrZoomPresets = [];
+  if (bounds.hasMatchData) pwrZoomPresets.push({ id: 'match', label: '▶ Match Only', start: bounds.matchStart, end: bounds.matchEnd, active: true });
+  if (bounds.autoStart !== null && bounds.autoStart !== undefined) pwrZoomPresets.push({ id: 'auto', label: '🔵 Auto', start: bounds.autoStart, end: bounds.autoEnd });
+  if (bounds.teleopStart !== null && bounds.teleopStart !== undefined) pwrZoomPresets.push({ id: 'teleop', label: '🟢 Teleop', start: bounds.teleopStart, end: bounds.teleopEnd });
+  pwrZoomPresets.push({ id: 'full', label: '📏 Full Log', start: null, end: null, active: !bounds.hasMatchData });
+
   document.getElementById('powerChartControls').innerHTML =
+    pwrZoomPresets.map(z =>
+      `<button class="chart-toggle pwr-zoom-preset ${z.active ? 'active' : ''}" data-start="${z.start}" data-end="${z.end}">${z.label}</button>`
+    ).join('') +
     '<button class="chart-toggle" id="pwrFullscreenBtn" style="margin-left:auto;" onclick="togglePowerFullscreen()">⛶ Fullscreen</button>';
+
+  document.querySelectorAll('#powerChartControls .pwr-zoom-preset').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#powerChartControls .pwr-zoom-preset').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const start = btn.dataset.start === 'null' ? undefined : parseFloat(btn.dataset.start);
+      const end = btn.dataset.end === 'null' ? undefined : parseFloat(btn.dataset.end);
+      if (!powerChartInstance) return;
+      if (start !== undefined && end !== undefined) {
+        powerChartInstance.options.scales.x.min = start.toFixed(1);
+        powerChartInstance.options.scales.x.max = end.toFixed(1);
+      } else {
+        delete powerChartInstance.options.scales.x.min;
+        delete powerChartInstance.options.scales.x.max;
+      }
+      powerChartInstance.update();
+      const resetBtn = document.getElementById('pwrResetZoomBtn');
+      if (resetBtn) resetBtn.remove();
+    });
+  });
 
   // Downsample
   const step = Math.max(1, Math.floor(records.length / 1500));
@@ -2943,7 +3241,12 @@ function renderPower(logData) {
         }
       },
       scales: {
-        x: { title: { display: true, text: 'Time (s)', font: { family: 'JetBrains Mono', size: 11 } }, ticks: { font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 20 } },
+        x: {
+          title: { display: true, text: 'Time (s)', font: { family: 'JetBrains Mono', size: 11 } },
+          ticks: { font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 20 },
+          min: bounds.hasMatchData ? bounds.matchStart.toFixed(1) : undefined,
+          max: bounds.hasMatchData ? bounds.matchEnd.toFixed(1) : undefined
+        },
         y: { title: { display: true, text: 'Current (A)', font: { family: 'JetBrains Mono', size: 11 } }, min: 0, ticks: { font: { family: 'JetBrains Mono', size: 10 } }, grid: { color: 'rgba(0,0,0,0.05)' } }
       }
     },
