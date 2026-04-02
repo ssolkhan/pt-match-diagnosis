@@ -2331,26 +2331,11 @@ function renderTimeline(logData, eventData) {
     });
   });
 
-  // Snap a time value to the nearest actual label (Chart.js category axis requires exact match)
-  function snapToLabel(time, direction) {
-    // direction: 'floor' snaps down, 'ceil' snaps up, undefined = nearest
-    let best = labels[0];
-    let bestDist = Infinity;
-    for (const l of labels) {
-      const lv = parseFloat(l);
-      const dist = Math.abs(lv - time);
-      if (direction === 'floor' && lv > time) continue;
-      if (direction === 'ceil' && lv < time) continue;
-      if (dist < bestDist) { bestDist = dist; best = l; }
-    }
-    return best;
-  }
-
   function applyTimelineZoom(start, end) {
     if (!chartInstance) return;
     if (start !== undefined && end !== undefined) {
-      chartInstance.options.scales.x.min = snapToLabel(start, 'floor');
-      chartInstance.options.scales.x.max = snapToLabel(end, 'ceil');
+      chartInstance.options.scales.x.min = start;
+      chartInstance.options.scales.x.max = end;
     } else {
       delete chartInstance.options.scales.x.min;
       delete chartInstance.options.scales.x.max;
@@ -2358,9 +2343,14 @@ function renderTimeline(logData, eventData) {
     chartInstance.update();
     // Sync mode chart
     if (modeChartInstance) {
+      // Mode chart stays category — find nearest label indices
+      const mLabels = modeChartInstance.data.labels;
       if (start !== undefined && end !== undefined) {
-        modeChartInstance.options.scales.x.min = chartInstance.options.scales.x.min;
-        modeChartInstance.options.scales.x.max = chartInstance.options.scales.x.max;
+        let minL = mLabels[0], maxL = mLabels[mLabels.length - 1];
+        for (const l of mLabels) { if (parseFloat(l) >= start) { minL = l; break; } }
+        for (let i = mLabels.length - 1; i >= 0; i--) { if (parseFloat(mLabels[i]) <= end) { maxL = mLabels[i]; break; } }
+        modeChartInstance.options.scales.x.min = minL;
+        modeChartInstance.options.scales.x.max = maxL;
       } else {
         delete modeChartInstance.options.scales.x.min;
         delete modeChartInstance.options.scales.x.max;
@@ -2383,41 +2373,36 @@ function renderTimeline(logData, eventData) {
 
   const getDataForSeries = (name) => {
     return sampled.map(r => {
+      let y;
       switch (name) {
-        case 'Voltage': return r.voltage;
-        case 'Packet Loss': return r.packetLoss !== null ? r.packetLoss * 100 : null;
-        case 'CAN Usage': return (r.canUsage !== null && r.canUsage < 0.995) ? r.canUsage * 100 : null;
-        case 'roboRIO CPU': return r.rioCpu * 100;
-        case 'Trip Time': return r.tripTime;
-        default: return null;
+        case 'Voltage': y = r.voltage; break;
+        case 'Packet Loss': y = r.packetLoss !== null ? r.packetLoss * 100 : null; break;
+        case 'CAN Usage': y = (r.canUsage !== null && r.canUsage < 0.995) ? r.canUsage * 100 : null; break;
+        case 'roboRIO CPU': y = r.rioCpu * 100; break;
+        case 'Trip Time': y = r.tripTime; break;
+        default: y = null;
       }
+      return { x: r.time_s, y };
     });
   };
 
-  const labels = sampled.map(r => r.time_s.toFixed(1));
-
-  // Store globally for seek functions
-  window._timelineLabels = labels;
-
-  // Mode background plugin
+  // Mode background plugin — uses xScale pixel conversion for linear axis
   const modeBgPlugin = {
     id: 'modeBackground',
     beforeDraw(chart) {
       const ctx = chart.ctx;
       const xScale = chart.scales.x;
       const yScale = chart.scales.yVoltage || chart.scales.yPercent;
-      if (!yScale) return;
-      const meta = chart.getDatasetMeta(0);
-      if (!meta || !meta.data || !meta.data.length) return;
+      if (!xScale || !yScale) return;
 
-      // Draw mode bands
       let prevMode = sampled[0]?.mode;
-      let bandStart = 0;
+      let bandStartTime = sampled[0]?.time_s ?? 0;
       for (let i = 1; i <= sampled.length; i++) {
         const mode = i < sampled.length ? sampled[i].mode : null;
         if (mode !== prevMode || i === sampled.length) {
-          const x1 = meta.data[bandStart]?.x ?? xScale.left;
-          const x2 = meta.data[Math.min(i - 1, meta.data.length - 1)]?.x ?? xScale.right;
+          const endTime = i < sampled.length ? sampled[i].time_s : sampled[sampled.length - 1].time_s;
+          const x1 = xScale.getPixelForValue(bandStartTime);
+          const x2 = xScale.getPixelForValue(endTime);
           let color = 'rgba(229,231,235,0.25)';
           if (prevMode === 'auto') color = 'rgba(59,130,246,0.12)';
           else if (prevMode === 'teleop') color = 'rgba(34,197,94,0.10)';
@@ -2427,7 +2412,7 @@ function renderTimeline(logData, eventData) {
           ctx.fillRect(x1, yScale.top, x2 - x1, yScale.bottom - yScale.top);
           
           prevMode = mode;
-          bandStart = i;
+          bandStartTime = endTime;
         }
       }
     }
@@ -2452,12 +2437,19 @@ function renderTimeline(logData, eventData) {
     const hasVoltage = activeSeries.includes('Voltage');
     const hasOther = activeSeries.some(s => s !== 'Voltage');
 
-    const scales = { x: { display: true, title: { display: true, text: 'Time (s)', font: { family: 'JetBrains Mono', size: 11 } }, ticks: { font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 20 } } };
+    const scales = {
+      x: {
+        type: 'linear',
+        display: true,
+        title: { display: true, text: 'Time (s)', font: { family: 'JetBrains Mono', size: 11 } },
+        ticks: { font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 20 }
+      }
+    };
 
-    // Auto-crop: apply initial zoom from active preset
-    if (hasMatchData && !scales.x._zoomOverride) {
-      scales.x.min = snapToLabel(matchStart, 'floor');
-      scales.x.max = snapToLabel(matchEnd, 'ceil');
+    // Auto-crop to match window
+    if (hasMatchData) {
+      scales.x.min = matchStart;
+      scales.x.max = matchEnd;
     }
     
     if (hasVoltage) {
@@ -2492,11 +2484,12 @@ function renderTimeline(logData, eventData) {
   function updateChart() {
     const { datasets, scales } = buildChart();
     if (chartInstance) {
-      // Preserve current zoom state
+      // Preserve current zoom
       const curMin = chartInstance.options.scales.x.min;
       const curMax = chartInstance.options.scales.x.max;
       chartInstance.data.datasets = datasets;
       chartInstance.options.scales = scales;
+      // Restore zoom (overrides buildChart's default auto-crop)
       if (curMin !== undefined) chartInstance.options.scales.x.min = curMin;
       if (curMax !== undefined) chartInstance.options.scales.x.max = curMax;
       chartInstance.update();
@@ -2508,7 +2501,7 @@ function renderTimeline(logData, eventData) {
   if (chartInstance) chartInstance.destroy();
   chartInstance = new Chart(document.getElementById('timelineChart'), {
     type: 'line',
-    data: { labels, datasets },
+    data: { datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -2604,8 +2597,8 @@ function renderTimeline(logData, eventData) {
       scales: {
         x: { display: true, ticks: { display: false }, grid: { display: false },
           title: { display: true, text: 'Robot Mode:   🔵 Auto    🟢 Teleop    ⚫ Disabled    ⬜ Disconnected', font: { family: 'Outfit', size: 12 }, color: '#6B6560' },
-          min: hasMatchData ? snapToLabel(matchStart, 'floor') : undefined,
-          max: hasMatchData ? snapToLabel(matchEnd, 'ceil') : undefined
+          min: hasMatchData ? modeLabels.find(l => parseFloat(l) >= matchStart) : undefined,
+          max: hasMatchData ? [...modeLabels].reverse().find(l => parseFloat(l) <= matchEnd) : undefined
         },
         y: { display: false, max: 1 }
       }
@@ -2953,58 +2946,49 @@ function seekTimeline(time_s) {
   }
 
   setTimeout(() => {
-    if (!chartInstance || !chartInstance.data.labels) return;
-    const labels = chartInstance.data.labels;
-
-    // Snap helper for category axis
-    function snap(time, dir) {
-      let best = labels[0], bestDist = Infinity;
-      for (const l of labels) {
-        const lv = parseFloat(l), dist = Math.abs(lv - time);
-        if (dir === 'floor' && lv > time) continue;
-        if (dir === 'ceil' && lv < time) continue;
-        if (dist < bestDist) { bestDist = dist; best = l; }
-      }
-      return best;
-    }
+    if (!chartInstance) return;
 
     // Deactivate zoom presets
     document.querySelectorAll('#chartControls .zoom-preset').forEach(b => b.classList.remove('active'));
 
-    // Find closest data point
-    let closest = 0;
-    let minDist = Infinity;
-    for (let i = 0; i < labels.length; i++) {
-      const d = Math.abs(parseFloat(labels[i]) - time_s);
-      if (d < minDist) { minDist = d; closest = i; }
+    // Zoom to ±5s window around the event
+    chartInstance.options.scales.x.min = Math.max(0, time_s - 5);
+    chartInstance.options.scales.x.max = time_s + 5;
+    chartInstance.update();
+
+    // Find closest data point for tooltip
+    const ds = chartInstance.data.datasets[0];
+    if (ds && ds.data) {
+      let closest = 0, minDist = Infinity;
+      for (let i = 0; i < ds.data.length; i++) {
+        const d = Math.abs((ds.data[i]?.x ?? 0) - time_s);
+        if (d < minDist) { minDist = d; closest = i; }
+      }
+      setTimeout(() => {
+        const meta = chartInstance.getDatasetMeta(0);
+        if (meta && meta.data[closest]) {
+          chartInstance.setActiveElements([{ datasetIndex: 0, index: closest }]);
+          chartInstance.tooltip.setActiveElements(
+            [{ datasetIndex: 0, index: closest }],
+            { x: meta.data[closest].x, y: meta.data[closest].y }
+          );
+          chartInstance.update('none');
+        }
+      }, 100);
     }
 
-    // Zoom to ±5s window around the event
-    const xScale = chartInstance.options.scales.x;
-    xScale.min = snap(Math.max(0, time_s - 5), 'floor');
-    xScale.max = snap(time_s + 5, 'ceil');
-    chartInstance.update();
-    // Sync mode chart
-    if (modeChartInstance) {
-      modeChartInstance.options.scales.x.min = xScale.min;
-      modeChartInstance.options.scales.x.max = xScale.max;
+    // Sync mode chart (category axis — find nearest labels)
+    if (modeChartInstance && modeChartInstance.data.labels) {
+      const mLabels = modeChartInstance.data.labels;
+      let minL = mLabels[0], maxL = mLabels[mLabels.length - 1];
+      for (const l of mLabels) { if (parseFloat(l) >= time_s - 5) { minL = l; break; } }
+      for (let i = mLabels.length - 1; i >= 0; i--) { if (parseFloat(mLabels[i]) <= time_s + 5) { maxL = mLabels[i]; break; } }
+      modeChartInstance.options.scales.x.min = minL;
+      modeChartInstance.options.scales.x.max = maxL;
       modeChartInstance.update();
     }
 
-    // Draw highlight and show tooltip
-    setTimeout(() => {
-      const meta = chartInstance.getDatasetMeta(0);
-      if (meta && meta.data[closest]) {
-        chartInstance.setActiveElements([{ datasetIndex: 0, index: closest }]);
-        chartInstance.tooltip.setActiveElements(
-          [{ datasetIndex: 0, index: closest }],
-          { x: meta.data[closest].x, y: meta.data[closest].y }
-        );
-        chartInstance.update('none');
-      }
-    }, 100);
-
-    // Add "Reset Zoom" button if not already present
+    // Add "Reset Zoom" button
     if (!document.getElementById('resetZoomBtn')) {
       const btn = document.createElement('button');
       btn.id = 'resetZoomBtn';
@@ -3012,39 +2996,31 @@ function seekTimeline(time_s) {
       btn.textContent = '↩ Match View';
       btn.style.marginLeft = '12px';
       btn.onclick = () => {
-        // Return to match-only view
         const bounds = window._matchBounds;
-        const tLabels = chartInstance.data.labels;
-        function snapR(time, dir) {
-          let best = tLabels[0], bestDist = Infinity;
-          for (const l of tLabels) {
-            const lv = parseFloat(l), dist = Math.abs(lv - time);
-            if (dir === 'floor' && lv > time) continue;
-            if (dir === 'ceil' && lv < time) continue;
-            if (dist < bestDist) { bestDist = dist; best = l; }
-          }
-          return best;
-        }
         if (bounds && bounds.hasMatchData) {
-          chartInstance.options.scales.x.min = snapR(bounds.matchStart, 'floor');
-          chartInstance.options.scales.x.max = snapR(bounds.matchEnd, 'ceil');
-          if (modeChartInstance) {
-            modeChartInstance.options.scales.x.min = chartInstance.options.scales.x.min;
-            modeChartInstance.options.scales.x.max = chartInstance.options.scales.x.max;
-            modeChartInstance.update();
-          }
+          chartInstance.options.scales.x.min = bounds.matchStart;
+          chartInstance.options.scales.x.max = bounds.matchEnd;
         } else {
           delete chartInstance.options.scales.x.min;
           delete chartInstance.options.scales.x.max;
-          if (modeChartInstance) {
-            delete modeChartInstance.options.scales.x.min;
-            delete modeChartInstance.options.scales.x.max;
-            modeChartInstance.update();
-          }
         }
         chartInstance.update();
+        // Sync mode chart
+        if (modeChartInstance && modeChartInstance.data.labels) {
+          const mLabels = modeChartInstance.data.labels;
+          if (bounds && bounds.hasMatchData) {
+            let minL = mLabels[0], maxL = mLabels[mLabels.length - 1];
+            for (const l of mLabels) { if (parseFloat(l) >= bounds.matchStart) { minL = l; break; } }
+            for (let i = mLabels.length - 1; i >= 0; i--) { if (parseFloat(mLabels[i]) <= bounds.matchEnd) { maxL = mLabels[i]; break; } }
+            modeChartInstance.options.scales.x.min = minL;
+            modeChartInstance.options.scales.x.max = maxL;
+          } else {
+            delete modeChartInstance.options.scales.x.min;
+            delete modeChartInstance.options.scales.x.max;
+          }
+          modeChartInstance.update();
+        }
         btn.remove();
-        // Re-activate match preset
         const matchBtn = document.querySelector('#chartControls .zoom-preset[data-zoom="match"]');
         if (matchBtn) matchBtn.classList.add('active');
       };
@@ -3182,23 +3158,10 @@ function renderPower(logData) {
     ).join('') +
     '<button class="chart-toggle" id="pwrFullscreenBtn" style="margin-left:auto;" onclick="togglePowerFullscreen()">⛶ Fullscreen</button>';
 
-  // Downsample (before zoom handlers so labels is available)
+  // Downsample (before zoom handlers so powerSampled is available)
   const step = Math.max(1, Math.floor(records.length / 1500));
   powerSampled = [];
   for (let i = 0; i < records.length; i += step) powerSampled.push(records[i]);
-  const labels = powerSampled.map(r => r.time_s.toFixed(1));
-
-  // Snap helper for power chart labels
-  function pwrSnap(time, dir) {
-    let best = labels[0], bestDist = Infinity;
-    for (const l of labels) {
-      const lv = parseFloat(l), dist = Math.abs(lv - time);
-      if (dir === 'floor' && lv > time) continue;
-      if (dir === 'ceil' && lv < time) continue;
-      if (dist < bestDist) { bestDist = dist; best = l; }
-    }
-    return best;
-  }
 
   document.querySelectorAll('#powerChartControls .pwr-zoom-preset').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -3208,8 +3171,8 @@ function renderPower(logData) {
       const end = btn.dataset.end === 'null' ? undefined : parseFloat(btn.dataset.end);
       if (!powerChartInstance) return;
       if (start !== undefined && end !== undefined) {
-        powerChartInstance.options.scales.x.min = pwrSnap(start, 'floor');
-        powerChartInstance.options.scales.x.max = pwrSnap(end, 'ceil');
+        powerChartInstance.options.scales.x.min = start;
+        powerChartInstance.options.scales.x.max = end;
       } else {
         delete powerChartInstance.options.scales.x.min;
         delete powerChartInstance.options.scales.x.max;
@@ -3226,7 +3189,7 @@ function renderPower(logData) {
     activeArr.forEach(ch => {
       datasets.push({
         label: 'Ch ' + ch,
-        data: powerSampled.map(r => r.pdpChannels ? r.pdpChannels[ch] : 0),
+        data: powerSampled.map(r => ({ x: r.time_s, y: r.pdpChannels ? r.pdpChannels[ch] : 0 })),
         backgroundColor: chartColors[ch % chartColors.length] + '40',
         borderColor: chartColors[ch % chartColors.length],
         borderWidth: 1.2,
@@ -3239,7 +3202,7 @@ function renderPower(logData) {
     if (powerActiveChannels.has(-1)) {
       datasets.push({
         label: 'Total',
-        data: powerSampled.map(r => r.totalCurrent || 0),
+        data: powerSampled.map(r => ({ x: r.time_s, y: r.totalCurrent || 0 })),
         borderColor: '#1A1714',
         borderWidth: 2,
         borderDash: [5, 3],
@@ -3251,22 +3214,22 @@ function renderPower(logData) {
     return datasets;
   }
 
-  // Mode background plugin for power chart
+  // Mode background plugin for power chart — uses linear xScale
   const powerModeBgPlugin = {
     id: 'powerModeBackground',
     beforeDraw(chart) {
       const ctx = chart.ctx;
+      const xScale = chart.scales.x;
       const yScale = chart.scales.y;
-      if (!yScale) return;
-      const meta = chart.getDatasetMeta(0);
-      if (!meta || !meta.data || !meta.data.length) return;
+      if (!xScale || !yScale) return;
       let prevMode = powerSampled[0]?.mode;
-      let bandStart = 0;
+      let bandStartTime = powerSampled[0]?.time_s ?? 0;
       for (let i = 1; i <= powerSampled.length; i++) {
         const mode = i < powerSampled.length ? powerSampled[i].mode : null;
         if (mode !== prevMode || i === powerSampled.length) {
-          const x1 = meta.data[bandStart]?.x ?? chart.scales.x.left;
-          const x2 = meta.data[Math.min(i - 1, meta.data.length - 1)]?.x ?? chart.scales.x.right;
+          const endTime = i < powerSampled.length ? powerSampled[i].time_s : powerSampled[powerSampled.length - 1].time_s;
+          const x1 = xScale.getPixelForValue(bandStartTime);
+          const x2 = xScale.getPixelForValue(endTime);
           let color = 'rgba(229,231,235,0.25)';
           if (prevMode === 'auto') color = 'rgba(59,130,246,0.12)';
           else if (prevMode === 'teleop') color = 'rgba(34,197,94,0.10)';
@@ -3274,7 +3237,7 @@ function renderPower(logData) {
           ctx.fillStyle = color;
           ctx.fillRect(x1, yScale.top, x2 - x1, yScale.bottom - yScale.top);
           prevMode = mode;
-          bandStart = i;
+          bandStartTime = endTime;
         }
       }
     }
@@ -3283,7 +3246,12 @@ function renderPower(logData) {
   function updatePowerChart() {
     const datasets = buildPowerDatasets();
     if (powerChartInstance) {
+      // Preserve zoom
+      const curMin = powerChartInstance.options.scales.x.min;
+      const curMax = powerChartInstance.options.scales.x.max;
       powerChartInstance.data.datasets = datasets;
+      if (curMin !== undefined) powerChartInstance.options.scales.x.min = curMin;
+      if (curMax !== undefined) powerChartInstance.options.scales.x.max = curMax;
       powerChartInstance.update();
     }
   }
@@ -3291,7 +3259,7 @@ function renderPower(logData) {
   if (powerChartInstance) powerChartInstance.destroy();
   powerChartInstance = new Chart(document.getElementById('powerChart'), {
     type: 'line',
-    data: { labels, datasets: buildPowerDatasets() },
+    data: { datasets: buildPowerDatasets() },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -3313,10 +3281,11 @@ function renderPower(logData) {
       },
       scales: {
         x: {
+          type: 'linear',
           title: { display: true, text: 'Time (s)', font: { family: 'JetBrains Mono', size: 11 } },
           ticks: { font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 20 },
-          min: pHasMatch ? pwrSnap(pMatchStart, 'floor') : undefined,
-          max: pHasMatch ? pwrSnap(pMatchEnd, 'ceil') : undefined
+          min: pHasMatch ? pMatchStart : undefined,
+          max: pHasMatch ? pMatchEnd : undefined
         },
         y: { title: { display: true, text: 'Current (A)', font: { family: 'JetBrains Mono', size: 11 } }, min: 0, ticks: { font: { family: 'JetBrains Mono', size: 10 } }, grid: { color: 'rgba(0,0,0,0.05)' } }
       }
@@ -3397,24 +3366,12 @@ function seekPowerChart(time_s) {
 
   setTimeout(() => {
     if (!powerChartInstance) return;
-    const pLabels = powerChartInstance.data.labels;
-    function pSnap(time, dir) {
-      let best = pLabels[0], bestDist = Infinity;
-      for (const l of pLabels) {
-        const lv = parseFloat(l), dist = Math.abs(lv - time);
-        if (dir === 'floor' && lv > time) continue;
-        if (dir === 'ceil' && lv < time) continue;
-        if (dist < bestDist) { bestDist = dist; best = l; }
-      }
-      return best;
-    }
 
     // Deactivate zoom presets
     document.querySelectorAll('#powerChartControls .pwr-zoom-preset').forEach(b => b.classList.remove('active'));
 
-    const xScale = powerChartInstance.options.scales.x;
-    xScale.min = pSnap(Math.max(0, time_s - 5), 'floor');
-    xScale.max = pSnap(time_s + 5, 'ceil');
+    powerChartInstance.options.scales.x.min = Math.max(0, time_s - 5);
+    powerChartInstance.options.scales.x.max = time_s + 5;
     powerChartInstance.update();
 
     // Add reset zoom button
@@ -3428,8 +3385,8 @@ function seekPowerChart(time_s) {
       btn.onclick = () => {
         const bounds = window._matchBounds;
         if (bounds && bounds.hasMatchData) {
-          powerChartInstance.options.scales.x.min = pSnap(bounds.matchStart, 'floor');
-          powerChartInstance.options.scales.x.max = pSnap(bounds.matchEnd, 'ceil');
+          powerChartInstance.options.scales.x.min = bounds.matchStart;
+          powerChartInstance.options.scales.x.max = bounds.matchEnd;
         } else {
           delete powerChartInstance.options.scales.x.min;
           delete powerChartInstance.options.scales.x.max;
