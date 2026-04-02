@@ -3144,22 +3144,24 @@ function renderPower(logData) {
 
     document.getElementById('powerChannelToggles').innerHTML = `
       <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:6px;">Channel Visibility</div>
-      <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+      <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-bottom:8px;">
         <button class="chart-toggle" id="pwrToggleAll" style="font-size:11px;padding:4px 10px;">All</button>
         <button class="chart-toggle" id="pwrToggleNone" style="font-size:11px;padding:4px 10px;">None</button>
         <button class="chart-toggle" id="pwrToggleActive" style="font-size:11px;padding:4px 10px;">Active Only</button>
+        <span style="width:4px;"></span>
         ${Object.keys(PDH_GROUP_COLORS).filter(g => g !== 'Unused' && groups[g]?.some(c => c.hasData)).map(g =>
           `<button class="chart-toggle pwr-group-toggle" data-group="${g}" style="font-size:11px;padding:4px 10px;border-color:${PDH_GROUP_COLORS[g]};color:${PDH_GROUP_COLORS[g]};">${g}</button>`
         ).join('')}
-        <span style="width:8px;"></span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
         ${channelStats.map(c => {
           const color = pdhColor(c.ch);
           const active = powerActiveChannels.has(c.ch);
           const label = pdhName(c.ch);
           return `
-          <label style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border:1px solid ${active ? color : 'var(--border)'};border-radius:5px;font-size:11px;font-family:'JetBrains Mono',monospace;cursor:pointer;background:${active ? color + '18' : 'var(--surface)'};opacity:${c.hasData ? 1 : 0.35};transition:all 0.15s;" title="Ch ${c.ch} · CAN ${PDH_BY_CHANNEL[c.ch]?.canId ?? '—'} · ${pdhGroup(c.ch)}">
+          <label style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border:1px solid ${active ? color : 'var(--border)'};border-radius:5px;font-size:11px;font-family:'JetBrains Mono',monospace;cursor:pointer;background:${active ? color + '18' : 'var(--surface)'};opacity:${c.hasData ? 1 : 0.35};transition:all 0.15s;" title="CAN ${PDH_BY_CHANNEL[c.ch]?.canId ?? '—'} · ${pdhGroup(c.ch)}">
             <input type="checkbox" data-ch="${c.ch}" ${active ? 'checked' : ''} style="accent-color:${color};width:12px;height:12px;cursor:pointer;">
-            <span style="color:${active ? color : 'var(--text-secondary)'};font-weight:${active ? '600' : '400'};">${label}</span>
+            <span style="color:${active ? color : 'var(--text-secondary)'};font-weight:${active ? '600' : '400'};">${label} <span style="opacity:0.5;font-weight:400;">(${c.ch})</span></span>
           </label>`;
         }).join('')}
         <label style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border:1px solid ${powerActiveChannels.has(-1) ? '#1A1714' : 'var(--border)'};border-radius:5px;font-size:11px;font-family:'JetBrains Mono',monospace;cursor:pointer;background:${powerActiveChannels.has(-1) ? '#1A171418' : 'var(--surface)'};transition:all 0.15s;">
