@@ -1008,6 +1008,51 @@ body {
 // PYROTECH MATCH AUTOPSY — BINARY PARSERS & DIAGNOSTIC ENGINE
 // ========================================================================
 
+// ==================== PDH CHANNEL CONFIGURATION ====================
+// Maps PDH channels to CAN IDs and mechanism names.
+// Update when wiring changes.
+const PDH_CHANNELS = [
+  { channel: 0,  canId: 4,  name: 'Swerve Drive 1',  group: 'Drivetrain' },
+  { channel: 1,  canId: 3,  name: 'Swerve Turn 1',   group: 'Drivetrain' },
+  { channel: 2,  canId: null, name: 'Ch 2',           group: 'Unused' },
+  { channel: 3,  canId: null, name: 'Ch 3',           group: 'Unused' },
+  { channel: 4,  canId: 20, name: 'Intake Deploy',    group: 'Intake' },
+  { channel: 5,  canId: 21, name: 'Intake Roller 1',  group: 'Intake' },
+  { channel: 6,  canId: 22, name: 'Intake Roller 2',  group: 'Intake' },
+  { channel: 7,  canId: 50, name: 'Climber',          group: 'Climber' },
+  { channel: 8,  canId: 1,  name: 'Swerve Turn 2',   group: 'Drivetrain' },
+  { channel: 9,  canId: 2,  name: 'Swerve Drive 2',  group: 'Drivetrain' },
+  { channel: 10, canId: 31, name: 'Spindexer',        group: 'Indexer' },
+  { channel: 11, canId: 32, name: 'Indexer',           group: 'Indexer' },
+  { channel: 12, canId: 40, name: 'Turret',            group: 'Shooter' },
+  { channel: 13, canId: 42, name: 'Kraken 1',          group: 'Shooter' },
+  { channel: 14, canId: 41, name: 'Kraken 2',          group: 'Shooter' },
+  { channel: 15, canId: 99, name: 'LimeLight',         group: 'Sensors' },
+  { channel: 16, canId: 5,  name: 'Swerve Turn 3',   group: 'Drivetrain' },
+  { channel: 17, canId: 6,  name: 'Swerve Drive 3',  group: 'Drivetrain' },
+  { channel: 18, canId: 7,  name: 'Swerve Turn 4',   group: 'Drivetrain' },
+  { channel: 19, canId: 8,  name: 'Swerve Drive 4',  group: 'Drivetrain' },
+  { channel: 20, canId: 99, name: 'CANcoders',         group: 'Sensors' },
+  { channel: 21, canId: 99, name: 'VRM',               group: 'Power' },
+  { channel: 22, canId: null, name: 'Ch 22',           group: 'Unused' },
+  { channel: 23, canId: null, name: 'Ch 23',           group: 'Unused' },
+];
+const PDH_BY_CHANNEL = {};
+PDH_CHANNELS.forEach(ch => { PDH_BY_CHANNEL[ch.channel] = ch; });
+const PDH_BY_CAN_ID = {};
+PDH_CHANNELS.filter(ch => ch.canId !== null).forEach(ch => {
+  if (!PDH_BY_CAN_ID[ch.canId]) PDH_BY_CAN_ID[ch.canId] = [];
+  PDH_BY_CAN_ID[ch.canId].push(ch);
+});
+const PDH_GROUP_COLORS = {
+  'Drivetrain': '#1E5FC4', 'Intake': '#059669', 'Climber': '#7C3AED',
+  'Indexer': '#B8860B', 'Shooter': '#C41E1E', 'Sensors': '#6366F1',
+  'Power': '#F97316', 'Unused': '#9CA3AF',
+};
+function pdhName(ch) { return PDH_BY_CHANNEL[ch]?.name || ('Ch ' + ch); }
+function pdhGroup(ch) { return PDH_BY_CHANNEL[ch]?.group || 'Unknown'; }
+function pdhColor(ch) { return PDH_GROUP_COLORS[pdhGroup(ch)] || '#6B6560'; }
+
 const MAX_INT64 = BigInt("9223372036854775807");
 const LV_EPOCH = new Date(Date.UTC(1904, 0, 1));
 
@@ -1502,11 +1547,14 @@ function runDiagnostics(logData, eventData) {
     const detail = canMismatches[0].text;
     const canIdMatch = detail.match(/CAN ID (\d+)/);
     const canId = canIdMatch ? canIdMatch[1] : '?';
+    const mechChannels = PDH_BY_CAN_ID[Number(canId)];
+    const mechName = mechChannels && mechChannels.length > 0 ? mechChannels[0].name : null;
+    const mechLabel = mechName ? `${mechName} (CAN ID ${canId})` : `CAN ID ${canId}`;
     diagnostics.fixNow.push({
-      title: `🔧 CAN Device Mismatch (ID ${canId})`,
-      body: `Code expects a SPARK MAX on CAN ID ${canId}, but a different device is there. This means motor control for that mechanism may be unreliable or non-functional.`,
+      title: `🔧 CAN Device Mismatch — ${mechLabel}`,
+      body: `Code expects a SPARK MAX on CAN ID ${canId}${mechName ? ' (' + mechName + ')' : ''}, but a different device is there. This means motor control for that mechanism may be unreliable or non-functional.`,
       evidence: `"${canMismatches[0].text.substring(0, 120)}..."`,
-      action: `Verify CAN ID ${canId} — is it a SPARK MAX, SPARK Flex, or something else? Update the code constructor to match the actual hardware, or fix the CAN ID assignment in the hardware client (REV, CTRE).`
+      action: `Verify CAN ID ${canId}${mechName ? ' (' + mechName + ')' : ''} — is it a SPARK MAX, SPARK Flex, or something else? Update the code constructor to match the actual hardware, or fix the CAN ID assignment in the hardware client (REV, CTRE).`
     });
   }
 
@@ -2621,22 +2669,31 @@ function renderCanSummaryBanner(events) {
     return;
   }
 
-  // Extract device IDs from event text
+  // Extract device IDs from event text and resolve to mechanism names
   function extractDeviceIds(evts) {
     const ids = new Set();
     evts.forEach(e => {
-      // Match patterns like "ID 20", "IDs: 20, 50", "CAN ID 12", "device 5"
       const idMatches = e.text.matchAll(/(?:ID[s]?[:\s]+)([\d,\s]+)/gi);
       for (const m of idMatches) {
         m[1].split(/[,\s]+/).filter(s => /^\d+$/.test(s)).forEach(id => ids.add(id));
       }
       const devMatches = e.text.matchAll(/device\s+(\d+)/gi);
       for (const m of devMatches) ids.add(m[1]);
-      // Match "Message 255 not found"
       const msgMatch = e.text.match(/Message\s+(\d+)\s+not found/i);
       if (msgMatch) ids.add(msgMatch[1]);
     });
     return [...ids].sort((a,b) => Number(a) - Number(b));
+  }
+
+  function formatCanIds(ids) {
+    if (ids.length === 0) return '';
+    return ids.map(id => {
+      const channels = PDH_BY_CAN_ID[Number(id)];
+      const mechName = channels && channels.length > 0 ? channels[0].name : null;
+      return mechName
+        ? `<strong style="font-family:'JetBrains Mono',monospace;">${id}</strong> <span style="color:var(--text-muted);">(${mechName})</span>`
+        : `<strong style="font-family:'JetBrains Mono',monospace;">${id}</strong>`;
+    }).join(', ');
   }
 
   // Compute stale bursts (>3 in 1s window)
@@ -2660,7 +2717,7 @@ function renderCanSummaryBanner(events) {
         <div style="flex:1;">
           <div style="font-size:14px;font-weight:700;color:var(--red);">CAN Timeouts: ${canTimeouts.length} event${canTimeouts.length > 1 ? 's' : ''}</div>
           <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">
-            ${ids.length > 0 ? 'Device IDs: <strong style="font-family:\'JetBrains Mono\',monospace;">' + ids.join(', ') + '</strong>' : 'Check wiring and device firmware'}
+            ${ids.length > 0 ? 'Devices: ' + formatCanIds(ids) : 'Check wiring and device firmware'}
             ${firstTime ? ' · First at <span style="font-family:\'JetBrains Mono\',monospace;">' + firstTime.time_s.toFixed(1) + 's</span>' : ''}
           </div>
         </div>
@@ -2686,7 +2743,7 @@ function renderCanSummaryBanner(events) {
         <div style="flex:1;">
           <div style="font-size:14px;font-weight:700;color:${accentColor};">CAN Stale Data: ${canStale.length} event${canStale.length > 1 ? 's' : ''}${staleBursts > 0 ? ' (' + staleBursts + ' burst' + (staleBursts > 1 ? 's' : '') + ')' : ''}</div>
           <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">
-            ${ids.length > 0 ? 'Device IDs: <strong style="font-family:\'JetBrains Mono\',monospace;">' + ids.join(', ') + '</strong>' : 'Devices intermittently failing to respond'}
+            ${ids.length > 0 ? 'Devices: ' + formatCanIds(ids) : 'Devices intermittently failing to respond'}
             ${firstTime ? ' · First at <span style="font-family:\'JetBrains Mono\',monospace;">' + firstTime.time_s.toFixed(1) + 's</span>' : ''}
           </div>
         </div>
@@ -2707,7 +2764,7 @@ function renderCanSummaryBanner(events) {
         <div style="flex:1;">
           <div style="font-size:14px;font-weight:700;color:var(--red);">CAN Device Mismatch: ${canMismatch.length} device${canMismatch.length > 1 ? 's' : ''}</div>
           <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">
-            ${ids.length > 0 ? 'CAN IDs: <strong style="font-family:\'JetBrains Mono\',monospace;">' + ids.join(', ') + '</strong> — code expects different hardware' : 'Code/hardware type mismatch detected'}
+            ${ids.length > 0 ? 'Devices: ' + formatCanIds(ids) + ' — code expects different hardware' : 'Code/hardware type mismatch detected'}
           </div>
         </div>
       </div>`;
@@ -3061,38 +3118,50 @@ function renderPower(logData) {
     <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;">Top Current Consumers</div>
     <div class="top-consumers">
       ${top3.map((c, i) => `
-        <div class="consumer-card" style="border-left-color: ${['var(--fire)','var(--yellow)','var(--blue)'][i]}">
-          <div class="ch-label">${pdLabel} Channel ${c.ch}</div>
-          <div class="ch-value" style="color:${['var(--fire)','var(--yellow)','var(--blue)'][i]}">${c.peak.toFixed(1)}A peak</div>
-          <div class="ch-sub">Avg: ${c.avg.toFixed(1)}A · Total: ${c.total.toFixed(0)} A·s</div>
+        <div class="consumer-card" style="border-left-color: ${pdhColor(c.ch)}">
+          <div class="ch-label">${pdhName(c.ch)} <span style="opacity:0.5;font-size:10px;">Ch ${c.ch} · CAN ${PDH_BY_CHANNEL[c.ch]?.canId ?? '—'}</span></div>
+          <div class="ch-value" style="color:${pdhColor(c.ch)}">${c.peak.toFixed(1)}A peak</div>
+          <div class="ch-sub">Avg: ${c.avg.toFixed(1)}A · Total: ${c.total.toFixed(0)} A·s · ${pdhGroup(c.ch)}</div>
         </div>
       `).join('')}
       ${top3.length === 0 ? '<div style="padding:20px;color:var(--text-muted);">No PDP/PDH data available in this log.</div>' : ''}
     </div>
   `;
 
-  // Channel toggle checkboxes — all channels
-  const chartColors = ['#C41E1E','#B8860B','#1E5FC4','#7C3AED','#059669','#D4453A','#FF6B35','#6366F1',
-                        '#EC4899','#14B8A6','#F97316','#8B5CF6','#06B6D4','#84CC16','#EF4444','#A855F7',
-                        '#0EA5E9','#22D3EE','#F59E0B','#10B981','#E11D48','#7C3AED','#0D9488','#DC2626'];
+  // Channel toggle checkboxes — all channels with mechanism names
 
   // Default: show channels with data (up to first 8 with data)
   powerActiveChannels = new Set(sorted.slice(0, 8).map(c => c.ch));
 
   function renderToggles() {
+    // Group channels by mechanism group for organized layout
+    const groups = {};
+    channelStats.forEach(c => {
+      const g = pdhGroup(c.ch);
+      if (!groups[g]) groups[g] = [];
+      groups[g].push(c);
+    });
+
     document.getElementById('powerChannelToggles').innerHTML = `
       <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:6px;">Channel Visibility</div>
       <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
         <button class="chart-toggle" id="pwrToggleAll" style="font-size:11px;padding:4px 10px;">All</button>
         <button class="chart-toggle" id="pwrToggleNone" style="font-size:11px;padding:4px 10px;">None</button>
         <button class="chart-toggle" id="pwrToggleActive" style="font-size:11px;padding:4px 10px;">Active Only</button>
+        ${Object.keys(PDH_GROUP_COLORS).filter(g => g !== 'Unused' && groups[g]?.some(c => c.hasData)).map(g =>
+          `<button class="chart-toggle pwr-group-toggle" data-group="${g}" style="font-size:11px;padding:4px 10px;border-color:${PDH_GROUP_COLORS[g]};color:${PDH_GROUP_COLORS[g]};">${g}</button>`
+        ).join('')}
         <span style="width:8px;"></span>
-        ${channelStats.map(c => `
-          <label style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border:1px solid ${powerActiveChannels.has(c.ch) ? chartColors[c.ch % chartColors.length] : 'var(--border)'};border-radius:5px;font-size:11px;font-family:'JetBrains Mono',monospace;cursor:pointer;background:${powerActiveChannels.has(c.ch) ? chartColors[c.ch % chartColors.length] + '18' : 'var(--surface)'};opacity:${c.hasData ? 1 : 0.4};transition:all 0.15s;">
-            <input type="checkbox" data-ch="${c.ch}" ${powerActiveChannels.has(c.ch) ? 'checked' : ''} style="accent-color:${chartColors[c.ch % chartColors.length]};width:12px;height:12px;cursor:pointer;">
-            <span style="color:${powerActiveChannels.has(c.ch) ? chartColors[c.ch % chartColors.length] : 'var(--text-secondary)'};font-weight:${powerActiveChannels.has(c.ch) ? '600' : '400'};">Ch${c.ch}</span>
-          </label>
-        `).join('')}
+        ${channelStats.map(c => {
+          const color = pdhColor(c.ch);
+          const active = powerActiveChannels.has(c.ch);
+          const label = pdhName(c.ch);
+          return `
+          <label style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border:1px solid ${active ? color : 'var(--border)'};border-radius:5px;font-size:11px;font-family:'JetBrains Mono',monospace;cursor:pointer;background:${active ? color + '18' : 'var(--surface)'};opacity:${c.hasData ? 1 : 0.35};transition:all 0.15s;" title="Ch ${c.ch} · CAN ${PDH_BY_CHANNEL[c.ch]?.canId ?? '—'} · ${pdhGroup(c.ch)}">
+            <input type="checkbox" data-ch="${c.ch}" ${active ? 'checked' : ''} style="accent-color:${color};width:12px;height:12px;cursor:pointer;">
+            <span style="color:${active ? color : 'var(--text-secondary)'};font-weight:${active ? '600' : '400'};">${label}</span>
+          </label>`;
+        }).join('')}
         <label style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border:1px solid ${powerActiveChannels.has(-1) ? '#1A1714' : 'var(--border)'};border-radius:5px;font-size:11px;font-family:'JetBrains Mono',monospace;cursor:pointer;background:${powerActiveChannels.has(-1) ? '#1A171418' : 'var(--surface)'};transition:all 0.15s;">
           <input type="checkbox" data-ch="-1" ${powerActiveChannels.has(-1) ? 'checked' : ''} style="width:12px;height:12px;cursor:pointer;">
           <span style="color:${powerActiveChannels.has(-1) ? '#1A1714' : 'var(--text-secondary)'};font-weight:${powerActiveChannels.has(-1) ? '600' : '400'};">Total</span>
@@ -3123,6 +3192,15 @@ function renderPower(logData) {
       powerActiveChannels.clear();
       channelStats.filter(c => c.hasData).forEach(c => powerActiveChannels.add(c.ch));
       renderToggles(); updatePowerChart();
+    });
+    // Group toggles — select all channels in a group
+    document.querySelectorAll('#powerChannelToggles .pwr-group-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const group = btn.dataset.group;
+        powerActiveChannels.clear();
+        channelStats.forEach(c => { if (pdhGroup(c.ch) === group) powerActiveChannels.add(c.ch); });
+        renderToggles(); updatePowerChart();
+      });
     });
   }
 
@@ -3187,11 +3265,12 @@ function renderPower(logData) {
     const datasets = [];
     const activeArr = [...powerActiveChannels].filter(ch => ch >= 0).sort((a,b) => a - b);
     activeArr.forEach(ch => {
+      const color = pdhColor(ch);
       datasets.push({
-        label: 'Ch ' + ch,
+        label: pdhName(ch),
         data: powerSampled.map(r => ({ x: r.time_s, y: r.pdpChannels ? r.pdpChannels[ch] : 0 })),
-        backgroundColor: chartColors[ch % chartColors.length] + '40',
-        borderColor: chartColors[ch % chartColors.length],
+        backgroundColor: color + '40',
+        borderColor: color,
         borderWidth: 1.2,
         fill: true,
         pointRadius: 0,
@@ -3298,14 +3377,17 @@ function renderPower(logData) {
   document.getElementById('powerChannelTable').innerHTML = `
     <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">All Channel Statistics</div>
     <div style="overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius);">
-      <table class="history-table" style="min-width:600px;">
+      <table class="history-table" style="min-width:700px;">
         <thead>
           <tr>
-            <th style="width:80px;">Channel</th>
-            <th style="width:90px;">Peak (A)</th>
-            <th style="width:90px;">Avg (A)</th>
-            <th style="width:110px;">Energy (A·s)</th>
-            <th style="width:80px;">Status</th>
+            <th style="width:160px;">Mechanism</th>
+            <th style="width:50px;">Ch</th>
+            <th style="width:50px;">CAN</th>
+            <th style="width:70px;">Group</th>
+            <th style="width:80px;">Peak (A)</th>
+            <th style="width:80px;">Avg (A)</th>
+            <th style="width:90px;">Energy (A·s)</th>
+            <th style="width:60px;">Status</th>
             <th>Peak Bar</th>
           </tr>
         </thead>
@@ -3313,10 +3395,14 @@ function renderPower(logData) {
           ${channelStats.map(c => {
             const isTop = topPeakChs.has(c.ch);
             const barPct = sorted.length && sorted[0].peak > 0 ? (c.peak / sorted[0].peak * 100) : 0;
-            const color = chartColors[c.ch % chartColors.length];
+            const color = pdhColor(c.ch);
+            const cfg = PDH_BY_CHANNEL[c.ch];
             return `
-              <tr style="${isTop ? 'background:var(--red-bg);' : ''}">
-                <td style="font-weight:600;color:${color};">${pdLabel} Ch ${c.ch}</td>
+              <tr style="${isTop ? 'background:var(--red-bg);' : ''}${!c.hasData ? 'opacity:0.4;' : ''}">
+                <td style="font-weight:600;color:${color};">${pdhName(c.ch)}</td>
+                <td style="color:var(--text-muted);">${c.ch}</td>
+                <td style="color:var(--text-muted);">${cfg?.canId ?? '—'}</td>
+                <td><span style="font-size:11px;padding:2px 6px;border-radius:4px;background:${color}18;color:${color};font-weight:500;">${pdhGroup(c.ch)}</span></td>
                 <td style="${isTop ? 'color:var(--red);font-weight:700;' : ''}">${c.peak.toFixed(1)}</td>
                 <td>${c.avg.toFixed(1)}</td>
                 <td>${c.total.toFixed(1)}</td>
