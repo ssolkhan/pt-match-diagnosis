@@ -947,10 +947,10 @@ body {
   <!-- TAB: Match Summary -->
   <div class="tab-panel active" id="tab-summary">
     <div class="health-section" id="healthSection"></div>
+    <div id="summaryMotorAnomalies" style="margin-top:16px;"></div>
+    <div id="summaryAlerts" style="margin-top:16px;"></div>
     <div class="mode-bar-section" id="modeBarSection"></div>
     <div class="summary-grid" id="summaryGrid"></div>
-    <div id="summaryAlerts" style="margin-top:16px;"></div>
-    <div id="summaryMotorAnomalies" style="margin-top:16px;"></div>
   </div>
 
   <!-- TAB: Unified Timeline -->
@@ -966,6 +966,7 @@ body {
 
   <!-- TAB: Power Distribution -->
   <div class="tab-panel" id="tab-power">
+    <div id="powerAnomalyAlerts" style="margin-bottom:16px;"></div>
     <div id="powerTopConsumers" style="margin-bottom:16px;"></div>
     <div id="powerChannelToggles" style="margin-bottom:12px;"></div>
     <div class="chart-controls" id="powerChartControls" style="display:flex;flex-wrap:wrap;align-items:center;margin-bottom:8px;"></div>
@@ -978,6 +979,7 @@ body {
   <!-- TAB: Errors & Warnings -->
   <div class="tab-panel" id="tab-errors">
     <div id="canSummaryBanner"></div>
+    <div id="motorAnomalyBanner"></div>
     <div class="error-filters" id="errorFilters"></div>
     <div class="error-list" id="errorList"></div>
   </div>
@@ -2250,8 +2252,8 @@ function renderSummary(logData, eventData) {
   const healthLabel = health >= 75 ? 'Good Match' : health >= 50 ? 'Issues Detected' : 'Critical Problems';
 
   const penaltyHTML = penalties.length > 0
-    ? `<div style="margin-top:10px;font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;line-height:1.6;">${penalties.map(p => '• ' + p).join('<br>')}</div>`
-    : `<div style="margin-top:10px;font-size:11px;color:var(--green);font-family:'JetBrains Mono',monospace;">No penalties — clean match!</div>`;
+    ? `<details style="margin-top:10px;"><summary style="font-size:11px;color:var(--text-muted);cursor:pointer;font-family:'JetBrains Mono',monospace;user-select:none;">▸ Score breakdown (${penalties.length} penalties)</summary><div style="margin-top:6px;font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;line-height:1.6;padding-left:4px;">${penalties.map(p => '• ' + p).join('<br>')}</div></details>`
+    : '';
 
   document.getElementById('healthSection').innerHTML = `
     <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:14px;">Match Health Score</div>
@@ -2283,9 +2285,11 @@ function renderSummary(logData, eventData) {
   if (curPhase.count > 0) phases.push(curPhase);
 
   const totalBlocks = phases.reduce((s, p) => s + p.count, 0);
+  const modeNames = { auto: 'Auto', teleop: 'Teleop', disabled: 'Disabled', disconnected: 'Disconnected' };
   const modeBarHTML = phases.map(p => {
     const pct = (p.count / totalBlocks * 100);
-    const label = pct > 8 ? `${(p.count).toFixed(0)}s` : '';
+    const dur = (p.count).toFixed(0);
+    const label = pct > 12 ? `${modeNames[p.mode] || p.mode} (${dur}s)` : pct > 5 ? `${dur}s` : '';
     return `<div class="segment ${p.mode}" style="width:${pct}%">${label}</div>`;
   }).join('');
 
@@ -2293,8 +2297,8 @@ function renderSummary(logData, eventData) {
     <h3>Match Mode Timeline</h3>
     <div class="mode-bar">${modeBarHTML}</div>
     <div class="mode-legend">
-      <span><div class="dot" style="background:var(--auto-color)"></div> Auto (${(autoRecs.length * 0.02).toFixed(1)}s)</span>
-      <span><div class="dot" style="background:var(--teleop-color)"></div> Teleop (${(teleopRecs.length * 0.02).toFixed(1)}s)</span>
+      <span><div class="dot" style="background:var(--auto-color)"></div> Auto</span>
+      <span><div class="dot" style="background:var(--teleop-color)"></div> Teleop</span>
       <span><div class="dot" style="background:var(--disabled-color)"></div> Disabled</span>
       <span><div class="dot" style="background:#E5E7EB"></div> Disconnected</span>
     </div>
@@ -2361,120 +2365,62 @@ function renderSummary(logData, eventData) {
   `;
 
   // ==================== MOTOR ANOMALY DETECTION ====================
-  renderMotorAnomalies(matchRecs);
+  computeMotorAnomalies(matchRecs);
+  renderMotorAnomalySummary();
 }
 
-function renderMotorAnomalies(matchRecs) {
-  const container = document.getElementById('summaryMotorAnomalies');
-  if (!matchRecs || matchRecs.length === 0) { container.innerHTML = ''; return; }
+let motorAnomalies = [];
 
-  // Determine channel count
+function computeMotorAnomalies(matchRecs) {
+  motorAnomalies = [];
+  if (!matchRecs || matchRecs.length === 0) return;
   const hasPDH = matchRecs.some(r => r.pdpChannels && r.pdpChannels.length >= 24 && r.pdpChannels.slice(16).some(v => v > 0));
   const numChannels = hasPDH ? 24 : 16;
-
-  // Compute per-channel stats during match
   const stats = [];
   for (let ch = 0; ch < numChannels; ch++) {
     const values = matchRecs.map(r => r.pdpChannels ? r.pdpChannels[ch] : 0).filter(v => v > 0);
     const peak = values.length ? Math.max(...values) : 0;
     const avg = values.length ? values.reduce((s,v) => s+v, 0) / values.length : 0;
-    const hasData = peak > 0.5;
-    stats.push({ ch, peak, avg, hasData });
+    stats.push({ ch, peak, avg, hasData: peak > 0.5 });
   }
-
-  // Only consider active motor channels (exclude sensors, VRM, unused)
   const motorChannels = stats.filter(c => c.hasData && !['Sensors','Power','Unused'].includes(pdhGroup(c.ch)));
-  if (motorChannels.length < 2) { container.innerHTML = ''; return; }
-
-  // Group by function type for smarter comparison
-  // Compare swerve drives to each other, swerve turns to each other, etc.
+  if (motorChannels.length < 2) return;
   const functionalGroups = {};
   motorChannels.forEach(c => {
-    const name = pdhName(c.ch);
-    // Extract functional role: "Swerve Drive", "Swerve Turn", "Intake Roller", etc.
-    const role = name.replace(/\s+(RF|LF|BL|BR|1|2|3|4)$/i, '').trim();
+    const role = pdhName(c.ch).replace(/\s+(RF|LF|BL|BR|1|2|3|4)$/i, '').trim();
     if (!functionalGroups[role]) functionalGroups[role] = [];
     functionalGroups[role].push(c);
   });
-
-  const anomalies = [];
-
-  // Within-group comparison (e.g., Swerve Drive RF vs LF vs BL vs BR)
   Object.entries(functionalGroups).forEach(([role, channels]) => {
-    if (channels.length < 2) return; // Need at least 2 to compare
+    if (channels.length < 2) return;
     const groupAvg = channels.reduce((s,c) => s + c.avg, 0) / channels.length;
     const groupPeakAvg = channels.reduce((s,c) => s + c.peak, 0) / channels.length;
-    if (groupAvg < 0.5) return; // Ignore low-activity groups
-
+    if (groupAvg < 0.5) return;
     channels.forEach(c => {
-      // Flag if average is >2× the group average, or peak is >2× group peak average
       const avgRatio = groupAvg > 0 ? c.avg / groupAvg : 0;
       const peakRatio = groupPeakAvg > 0 ? c.peak / groupPeakAvg : 0;
-
-      if (avgRatio > 2.0) {
-        anomalies.push({
-          ch: c.ch,
-          type: 'high_avg',
-          severity: avgRatio > 3.0 ? 'danger' : 'warning',
-          title: `${pdhName(c.ch)} drawing ${avgRatio.toFixed(1)}× more than other ${role} motors`,
-          detail: `Avg: ${c.avg.toFixed(1)}A vs group avg ${groupAvg.toFixed(1)}A`,
-          ratio: avgRatio
-        });
-      }
-      if (peakRatio > 2.0 && c.peak > 30) {
-        anomalies.push({
-          ch: c.ch,
-          type: 'high_peak',
-          severity: peakRatio > 3.0 ? 'danger' : 'warning',
-          title: `${pdhName(c.ch)} peak ${peakRatio.toFixed(1)}× higher than other ${role} motors`,
-          detail: `Peak: ${c.peak.toFixed(1)}A vs group avg peak ${groupPeakAvg.toFixed(1)}A`,
-          ratio: peakRatio
-        });
-      }
-      // Also flag if significantly lower (might indicate a broken motor/encoder)
-      if (avgRatio < 0.3 && groupAvg > 2.0) {
-        anomalies.push({
-          ch: c.ch,
-          type: 'low_avg',
-          severity: 'warning',
-          title: `${pdhName(c.ch)} drawing much less than other ${role} motors`,
-          detail: `Avg: ${c.avg.toFixed(1)}A vs group avg ${groupAvg.toFixed(1)}A — motor may not be working`,
-          ratio: avgRatio
-        });
-      }
+      if (avgRatio > 2.0) motorAnomalies.push({ ch: c.ch, type: 'high_avg', severity: avgRatio > 3.0 ? 'danger' : 'warning', title: `${pdhName(c.ch)} drawing ${avgRatio.toFixed(1)}\u00d7 more than other ${role} motors`, detail: `Avg: ${c.avg.toFixed(1)}A vs group avg ${groupAvg.toFixed(1)}A`, ratio: avgRatio });
+      if (peakRatio > 2.0 && c.peak > 30) motorAnomalies.push({ ch: c.ch, type: 'high_peak', severity: peakRatio > 3.0 ? 'danger' : 'warning', title: `${pdhName(c.ch)} peak ${peakRatio.toFixed(1)}\u00d7 higher than other ${role} motors`, detail: `Peak: ${c.peak.toFixed(1)}A vs group avg peak ${groupPeakAvg.toFixed(1)}A`, ratio: peakRatio });
+      if (avgRatio < 0.3 && groupAvg > 2.0) motorAnomalies.push({ ch: c.ch, type: 'low_avg', severity: 'warning', title: `${pdhName(c.ch)} drawing much less than other ${role} motors`, detail: `Avg: ${c.avg.toFixed(1)}A vs group avg ${groupAvg.toFixed(1)}A \u2014 motor may not be working`, ratio: avgRatio });
     });
   });
-
-  // Also flag any single motor that draws >60A peak (breaker trip territory)
   motorChannels.forEach(c => {
-    if (c.peak > 60) {
-      anomalies.push({
-        ch: c.ch,
-        type: 'breaker_risk',
-        severity: 'danger',
-        title: `${pdhName(c.ch)} peaked at ${c.peak.toFixed(1)}A — breaker trip risk`,
-        detail: `40A breaker trips at sustained >60A. Check for mechanism binding or stall.`,
-        ratio: c.peak / 40
-      });
-    }
+    if (c.peak > 60) motorAnomalies.push({ ch: c.ch, type: 'breaker_risk', severity: 'danger', title: `${pdhName(c.ch)} peaked at ${c.peak.toFixed(1)}A \u2014 breaker trip risk`, detail: `40A breaker trips at sustained >60A. Check for mechanism binding or stall.`, ratio: c.peak / 40 });
   });
+  motorAnomalies.sort((a,b) => (a.severity === 'danger' ? 0 : 1) - (b.severity === 'danger' ? 0 : 1) || b.ratio - a.ratio);
+}
 
-  // Sort: danger first, then by ratio
-  anomalies.sort((a,b) => (a.severity === 'danger' ? 0 : 1) - (b.severity === 'danger' ? 0 : 1) || b.ratio - a.ratio);
-
-  if (anomalies.length === 0) {
-    container.innerHTML = '';
-    return;
-  }
-
+function renderMotorAnomalySummary() {
+  const container = document.getElementById('summaryMotorAnomalies');
+  if (motorAnomalies.length === 0) { container.innerHTML = ''; return; }
   container.innerHTML = `
-    <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">⚡ Motor Current Anomalies</div>
+    <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">\u26a1 Motor Current Anomalies</div>
     <div style="display:flex;flex-direction:column;gap:8px;">
-      ${anomalies.map(a => {
+      ${motorAnomalies.map(a => {
         const color = a.severity === 'danger' ? 'var(--red)' : 'var(--yellow)';
         const bg = a.severity === 'danger' ? 'var(--red-bg)' : 'var(--yellow-bg)';
         const border = a.severity === 'danger' ? 'var(--red-border)' : 'var(--yellow-border)';
-        const icon = a.type === 'low_avg' ? '📉' : a.type === 'breaker_risk' ? '🔌' : '📈';
+        const icon = a.type === 'low_avg' ? '\ud83d\udcc9' : a.type === 'breaker_risk' ? '\ud83d\udd0c' : '\ud83d\udcc8';
         return `
           <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:${bg};border:1px solid ${border};border-left:4px solid ${color};border-radius:var(--radius);">
             <span style="font-size:18px;">${icon}</span>
@@ -2973,6 +2919,32 @@ function renderErrors(eventData) {
   // ---- CAN SUMMARY BANNER ----
   renderCanSummaryBanner(events);
 
+  // ---- MOTOR ANOMALY BANNER ----
+  const maBanner = document.getElementById('motorAnomalyBanner');
+  if (motorAnomalies.length > 0) {
+    maBanner.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
+        ${motorAnomalies.map(a => {
+          const color = a.severity === 'danger' ? 'var(--red)' : 'var(--yellow)';
+          const bg = a.severity === 'danger' ? 'var(--red-bg)' : 'var(--yellow-bg)';
+          const border = a.severity === 'danger' ? 'var(--red-border)' : 'var(--yellow-border)';
+          const icon = a.type === 'low_avg' ? '📉' : a.type === 'breaker_risk' ? '🔌' : '📈';
+          return `
+            <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:${bg};border:1px solid ${border};border-left:4px solid ${color};border-radius:var(--radius);">
+              <span style="font-size:18px;">${icon}</span>
+              <div style="flex:1;">
+                <div style="font-size:13px;font-weight:600;color:${color};">⚡ ${a.title}</div>
+                <div style="font-size:11px;color:var(--text-secondary);margin-top:2px;font-family:'JetBrains Mono',monospace;">${a.detail}</div>
+              </div>
+              <span style="font-size:11px;padding:3px 8px;border-radius:4px;background:${color}18;color:${color};font-family:'JetBrains Mono',monospace;font-weight:600;">${pdhGroup(a.ch)}</span>
+            </div>`;
+        }).join('')}
+      </div>
+    `;
+  } else {
+    maBanner.innerHTML = '';
+  }
+
   // Dedup and group events
   const meaningful = [];
   const seen = new Set();
@@ -3294,6 +3266,34 @@ function renderPower(logData) {
   const top3 = sorted.slice(0, 3);
   const pdLabel = hasPDH ? 'PDH' : 'PDP';
 
+  // Render motor anomaly alerts at top of Power tab
+  const anomalyChSet = new Set(motorAnomalies.map(a => a.ch));
+  const paAlerts = document.getElementById('powerAnomalyAlerts');
+  if (motorAnomalies.length > 0) {
+    paAlerts.innerHTML = `
+      <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">⚠️ Anomaly Channels Detected</div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:4px;">
+        ${motorAnomalies.map(a => {
+          const color = a.severity === 'danger' ? 'var(--red)' : 'var(--yellow)';
+          const bg = a.severity === 'danger' ? 'var(--red-bg)' : 'var(--yellow-bg)';
+          const border = a.severity === 'danger' ? 'var(--red-border)' : 'var(--yellow-border)';
+          const icon = a.type === 'low_avg' ? '📉' : a.type === 'breaker_risk' ? '🔌' : '📈';
+          return `
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:${bg};border:1px solid ${border};border-left:4px solid ${color};border-radius:var(--radius);">
+              <span style="font-size:16px;">${icon}</span>
+              <div style="flex:1;">
+                <div style="font-size:12px;font-weight:600;color:${color};">${a.title}</div>
+                <div style="font-size:10px;color:var(--text-secondary);font-family:'JetBrains Mono',monospace;">${a.detail}</div>
+              </div>
+              <button class="chart-toggle" style="font-size:10px;padding:3px 8px;border-color:${color};color:${color};" onclick="isolatePowerChannel(${a.ch})">Isolate on Chart</button>
+            </div>`;
+        }).join('')}
+      </div>
+    `;
+  } else {
+    paAlerts.innerHTML = '';
+  }
+
   document.getElementById('powerTopConsumers').innerHTML = `
     <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;">Top Current Consumers</div>
     <div class="top-consumers">
@@ -3576,12 +3576,15 @@ function renderPower(logData) {
         <tbody>
           ${channelStats.map(c => {
             const isTop = topPeakChs.has(c.ch);
+            const isAnomaly = anomalyChSet.has(c.ch);
+            const anomalyInfo = motorAnomalies.find(a => a.ch === c.ch);
             const barPct = sorted.length && sorted[0].peak > 0 ? (c.peak / sorted[0].peak * 100) : 0;
             const color = pdhColor(c.ch);
             const cfg = PDH_BY_CHANNEL[c.ch];
+            const rowBg = isAnomaly ? (anomalyInfo?.severity === 'danger' ? 'background:var(--red-bg);' : 'background:var(--yellow-bg);') : isTop ? 'background:var(--red-bg);' : '';
             return `
-              <tr style="${isTop ? 'background:var(--red-bg);' : ''}${!c.hasData ? 'opacity:0.4;' : ''}">
-                <td style="font-weight:600;color:${color};">${pdhName(c.ch)}</td>
+              <tr style="${rowBg}${!c.hasData ? 'opacity:0.4;' : ''}">
+                <td style="font-weight:600;color:${color};">${isAnomaly ? '⚠️ ' : ''}${pdhName(c.ch)}</td>
                 <td style="color:var(--text-muted);">${c.ch}</td>
                 <td style="color:var(--text-muted);">${cfg?.canId ?? '—'}</td>
                 <td><span style="font-size:11px;padding:2px 6px;border-radius:4px;background:${color}18;color:${color};font-weight:500;">${pdhGroup(c.ch)}</span></td>
@@ -3605,6 +3608,22 @@ function renderPower(logData) {
 }
 
 // Power chart fullscreen
+// Isolate a single channel on the power chart (called from anomaly buttons)
+function isolatePowerChannel(ch) {
+  powerActiveChannels.clear();
+  powerActiveChannels.add(ch);
+  // Re-render power if needed
+  if (powerNeedsRender && parsedLog) {
+    renderPower(parsedLog);
+    powerNeedsRender = false;
+  } else if (powerChartInstance) {
+    // Just update the chart datasets
+    // Need to trigger a re-render of toggles and chart
+    // The simplest way: re-render the whole power tab
+    if (parsedLog) renderPower(parsedLog);
+  }
+}
+
 function togglePowerFullscreen() {
   const container = document.getElementById('powerChartContainer');
   const btn = document.getElementById('pwrFullscreenBtn');
