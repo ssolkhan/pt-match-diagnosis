@@ -949,6 +949,8 @@ body {
     <div class="health-section" id="healthSection"></div>
     <div class="mode-bar-section" id="modeBarSection"></div>
     <div class="summary-grid" id="summaryGrid"></div>
+    <div id="summaryAlerts" style="margin-top:16px;"></div>
+    <div id="summaryMotorAnomalies" style="margin-top:16px;"></div>
   </div>
 
   <!-- TAB: Unified Timeline -->
@@ -1012,26 +1014,26 @@ body {
 // Maps PDH channels to CAN IDs and mechanism names.
 // Update when wiring changes.
 const PDH_CHANNELS = [
-  { channel: 0,  canId: 4,  name: 'Swerve Drive 1',  group: 'Drivetrain' },
-  { channel: 1,  canId: 3,  name: 'Swerve Turn 1',   group: 'Drivetrain' },
+  { channel: 0,  canId: 4,  name: 'Swerve Drive RF',  group: 'Drivetrain' },
+  { channel: 1,  canId: 3,  name: 'Swerve Turn RF',   group: 'Drivetrain' },
   { channel: 2,  canId: null, name: 'Ch 2',           group: 'Unused' },
   { channel: 3,  canId: null, name: 'Ch 3',           group: 'Unused' },
   { channel: 4,  canId: 20, name: 'Intake Deploy',    group: 'Intake' },
   { channel: 5,  canId: 21, name: 'Intake Roller 1',  group: 'Intake' },
   { channel: 6,  canId: 22, name: 'Intake Roller 2',  group: 'Intake' },
   { channel: 7,  canId: 50, name: 'Climber',          group: 'Climber' },
-  { channel: 8,  canId: 1,  name: 'Swerve Turn 2',   group: 'Drivetrain' },
-  { channel: 9,  canId: 2,  name: 'Swerve Drive 2',  group: 'Drivetrain' },
+  { channel: 8,  canId: 1,  name: 'Swerve Turn LF',   group: 'Drivetrain' },
+  { channel: 9,  canId: 2,  name: 'Swerve Drive LF',  group: 'Drivetrain' },
   { channel: 10, canId: 31, name: 'Spindexer',        group: 'Indexer' },
   { channel: 11, canId: 32, name: 'Indexer',           group: 'Indexer' },
   { channel: 12, canId: 40, name: 'Turret',            group: 'Shooter' },
   { channel: 13, canId: 42, name: 'Kraken 1',          group: 'Shooter' },
   { channel: 14, canId: 41, name: 'Kraken 2',          group: 'Shooter' },
   { channel: 15, canId: 99, name: 'LimeLight',         group: 'Sensors' },
-  { channel: 16, canId: 5,  name: 'Swerve Turn 3',   group: 'Drivetrain' },
-  { channel: 17, canId: 6,  name: 'Swerve Drive 3',  group: 'Drivetrain' },
-  { channel: 18, canId: 7,  name: 'Swerve Turn 4',   group: 'Drivetrain' },
-  { channel: 19, canId: 8,  name: 'Swerve Drive 4',  group: 'Drivetrain' },
+  { channel: 16, canId: 5,  name: 'Swerve Turn BL',   group: 'Drivetrain' },
+  { channel: 17, canId: 6,  name: 'Swerve Drive BL',  group: 'Drivetrain' },
+  { channel: 18, canId: 7,  name: 'Swerve Turn BR',   group: 'Drivetrain' },
+  { channel: 19, canId: 8,  name: 'Swerve Drive BR',  group: 'Drivetrain' },
   { channel: 20, canId: 99, name: 'CANcoders',         group: 'Sensors' },
   { channel: 21, canId: 99, name: 'VRM',               group: 'Power' },
   { channel: 22, canId: null, name: 'Ch 22',           group: 'Unused' },
@@ -2118,12 +2120,20 @@ function renderDashboard(logData, eventData, meta) {
   const autoRecs = records.filter(r => r.mode === 'auto');
   const teleopRecs = records.filter(r => r.mode === 'teleop');
 
-  // Health score
+  // Health score (expanded — matches renderSummary)
+  const canTimeoutsS = eventData.events.filter(e => e.category === 'CAN' && e.title.includes('Timeout'));
+  const canStaleS = eventData.events.filter(e => e.category === 'CAN' && e.title.includes('Stale'));
+  const maxCpuS = matchRecs.length ? Math.max(...matchRecs.map(r => r.rioCpu * 100)) : 0;
   let health = 100;
   if (minV < 8) health -= 40; else if (minV < 10) health -= 25; else if (minV < 11) health -= 10;
-  if (brownouts > 0) health -= 20;
-  if (maxLoss > 0.10) health -= 15; else if (maxLoss > 0.05) health -= 8;
+  if (brownouts > 5) health -= 25; else if (brownouts > 0) health -= 15;
+  if (maxLoss > 0.20) health -= 15; else if (maxLoss > 0.05) health -= 8;
+  if (flickerRate > 2.0) health -= 15; else if (flickerRate > 0.5) health -= 5;
+  if (canTimeoutsS.length > 3) health -= 15; else if (canTimeoutsS.length > 0) health -= 8;
+  if (canStaleS.length > 10) health -= 10; else if (canStaleS.length > 0) health -= 5;
+  if (maxCan > 0.70) health -= 8;
   if (critErrors > 3) health -= 15; else if (critErrors > 0) health -= 8;
+  if (avgCpu > 85) health -= 8; else if (maxCpuS > 95) health -= 5;
   if (autoRecs.length * 0.02 < 5 && autoRecs.length > 0) health -= 10;
   if (matchRecs.length === 0) health = 5;
   health = Math.max(0, Math.min(100, health));
@@ -2171,28 +2181,77 @@ function renderSummary(logData, eventData) {
   const maxV = validV.length ? Math.max(...validV.map(r => r.voltage)) : 0;
   const validLoss2 = matchRecs.filter(r => r.packetLoss !== null);
   const maxLoss = validLoss2.length ? Math.max(...validLoss2.map(r => r.packetLoss)) : 0;
+  const avgLoss = validLoss2.length ? validLoss2.reduce((s,r) => s + r.packetLoss, 0) / validLoss2.length : 0;
   const validCan4 = matchRecs.filter(r => r.canUsage !== null && r.canUsage < 0.995);
   const maxCan = validCan4.length ? Math.max(...validCan4.map(r => r.canUsage)) : 0;
   const brownouts = records.filter(r => r.brownout).length;
-  const critErrors = eventData.events.filter(e => e.severity === 'critical').length;
-  const warnings = eventData.events.filter(e => e.severity === 'warning').length;
+  const critErrors = eventData.events.filter(e => e.severity === 'critical' && !e.noise).length;
+  const warnings = eventData.events.filter(e => e.severity === 'warning' && !e.noise).length;
+  const canTimeouts = eventData.events.filter(e => e.category === 'CAN' && e.title.includes('Timeout'));
+  const canStale = eventData.events.filter(e => e.category === 'CAN' && e.title.includes('Stale'));
+  const avgCpu = matchRecs.length ? matchRecs.reduce((s,r) => s + r.rioCpu * 100, 0) / matchRecs.length : 0;
+  const maxCpu = matchRecs.length ? Math.max(...matchRecs.map(r => r.rioCpu * 100)) : 0;
 
-  // Health score (0-100)
+  // Comms flicker rate
+  let modeFlips = 0;
+  for (let i = 1; i < records.length; i++) if (records[i].mode !== records[i-1].mode) modeFlips++;
+  const totalDuration = records.length * 0.02;
+  const flickerRate = modeFlips / (totalDuration || 1);
+
+  // ==================== EXPANDED HEALTH SCORE ====================
   let health = 100;
-  if (minV < 8) health -= 40;
-  else if (minV < 10) health -= 25;
-  else if (minV < 11) health -= 10;
-  if (brownouts > 0) health -= 20;
-  if (maxLoss > 10) health -= 15;
-  else if (maxLoss > 5) health -= 8;
-  if (critErrors > 3) health -= 15;
-  else if (critErrors > 0) health -= 8;
-  if (autoRecs.length * 0.02 < 5 && autoRecs.length > 0) health -= 10;
-  if (matchRecs.length === 0) health = 5;
+  const penalties = [];
+
+  // Voltage
+  if (minV < 8) { health -= 40; penalties.push('Voltage collapse (<8V): −40'); }
+  else if (minV < 10) { health -= 25; penalties.push('Severe voltage drop (<10V): −25'); }
+  else if (minV < 11) { health -= 10; penalties.push('Voltage sag (<11V): −10'); }
+
+  // Brownouts
+  if (brownouts > 5) { health -= 25; penalties.push('Multiple brownouts (>5): −25'); }
+  else if (brownouts > 0) { health -= 15; penalties.push(`Brownouts (${brownouts}): −15`); }
+
+  // Packet loss (fraction 0.0–1.0)
+  if (maxLoss > 0.20) { health -= 15; penalties.push('Severe packet loss (>20%): −15'); }
+  else if (maxLoss > 0.05) { health -= 8; penalties.push('Elevated packet loss (>5%): −8'); }
+
+  // Comms flicker
+  if (flickerRate > 2.0) { health -= 15; penalties.push('Severe comms flicker: −15'); }
+  else if (flickerRate > 0.5) { health -= 5; penalties.push('Comms instability: −5'); }
+
+  // CAN timeouts
+  if (canTimeouts.length > 3) { health -= 15; penalties.push(`CAN timeouts (${canTimeouts.length}): −15`); }
+  else if (canTimeouts.length > 0) { health -= 8; penalties.push(`CAN timeout (${canTimeouts.length}): −8`); }
+
+  // CAN stale data
+  if (canStale.length > 10) { health -= 10; penalties.push(`CAN stale data (${canStale.length}): −10`); }
+  else if (canStale.length > 0) { health -= 5; penalties.push(`CAN stale data (${canStale.length}): −5`); }
+
+  // CAN bus utilization
+  if (maxCan > 0.70) { health -= 8; penalties.push('High CAN utilization (>70%): −8'); }
+
+  // Critical errors
+  if (critErrors > 3) { health -= 15; penalties.push(`Many critical errors (${critErrors}): −15`); }
+  else if (critErrors > 0) { health -= 8; penalties.push(`Critical errors (${critErrors}): −8`); }
+
+  // CPU
+  if (avgCpu > 85) { health -= 8; penalties.push('High avg CPU (>85%): −8'); }
+  else if (maxCpu > 95) { health -= 5; penalties.push('CPU spike (>95%): −5'); }
+
+  // Auto duration
+  if (autoRecs.length * 0.02 < 5 && autoRecs.length > 0) { health -= 10; penalties.push('Short auto (<5s): −10'); }
+
+  // No match
+  if (matchRecs.length === 0) { health = 5; penalties.push('No match activity: forced to 5'); }
+
   health = Math.max(0, Math.min(100, health));
 
   const healthColor = health >= 75 ? 'var(--green)' : health >= 50 ? 'var(--yellow)' : 'var(--red)';
   const healthLabel = health >= 75 ? 'Good Match' : health >= 50 ? 'Issues Detected' : 'Critical Problems';
+
+  const penaltyHTML = penalties.length > 0
+    ? `<div style="margin-top:10px;font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;line-height:1.6;">${penalties.map(p => '• ' + p).join('<br>')}</div>`
+    : `<div style="margin-top:10px;font-size:11px;color:var(--green);font-family:'JetBrains Mono',monospace;">No penalties — clean match!</div>`;
 
   document.getElementById('healthSection').innerHTML = `
     <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:14px;">Match Health Score</div>
@@ -2203,42 +2262,23 @@ function renderSummary(logData, eventData) {
       </div>
       <div class="health-label" style="color:${healthColor}">${healthLabel}</div>
     </div>
+    ${penaltyHTML}
   `;
 
-  // Mode bar
+  // Mode bar (unchanged logic)
   const totalRecs = records.length;
-  const segments = [];
-  let currentMode = records[0]?.mode || 'disconnected';
-  let segStart = 0;
-  for (let i = 1; i <= records.length; i++) {
-    const mode = i < records.length ? records[i].mode : null;
-    // Debounce: accumulate segments in blocks of 50 (1 second)
-    if (mode !== currentMode || i === records.length) {
-      segments.push({ mode: currentMode, start: segStart, end: i });
-      currentMode = mode;
-      segStart = i;
-    }
-  }
-
-  // Consolidate into major phases
   const phases = [];
   let curPhase = { mode: 'disconnected', count: 0 };
-  const blockSize = 50; // 1 second blocks
+  const blockSize = 50;
   for (let b = 0; b < Math.ceil(totalRecs / blockSize); b++) {
     const blockStart = b * blockSize;
     const blockEnd = Math.min((b + 1) * blockSize, totalRecs);
     const blockRecs = records.slice(blockStart, blockEnd);
-    // Dominant mode in this block
     const modeCounts = {};
     blockRecs.forEach(r => { modeCounts[r.mode] = (modeCounts[r.mode] || 0) + 1; });
     let dominant = Object.entries(modeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'disconnected';
-    
-    if (dominant === curPhase.mode) {
-      curPhase.count++;
-    } else {
-      if (curPhase.count > 0) phases.push({ ...curPhase });
-      curPhase = { mode: dominant, count: 1 };
-    }
+    if (dominant === curPhase.mode) { curPhase.count++; }
+    else { if (curPhase.count > 0) phases.push({ ...curPhase }); curPhase = { mode: dominant, count: 1 }; }
   }
   if (curPhase.count > 0) phases.push(curPhase);
 
@@ -2260,10 +2300,12 @@ function renderSummary(logData, eventData) {
     </div>
   `;
 
-  // Stat cards
+  // Stat cards — now includes CAN timeouts and stale
   const vClass = minV < 10 ? 'danger' : minV < 11 ? 'warning' : 'good';
   const lossClass = maxLoss > 0.05 ? 'warning' : 'good';
   const canClass = maxCan > 0.7 ? 'warning' : 'good';
+  const canTimeoutClass = canTimeouts.length > 0 ? 'danger' : 'good';
+  const canStaleClass = canStale.length > 10 ? 'danger' : canStale.length > 0 ? 'warning' : 'good';
 
   document.getElementById('summaryGrid').innerHTML = `
     <div class="stat-card ${vClass}">
@@ -2274,12 +2316,22 @@ function renderSummary(logData, eventData) {
     <div class="stat-card ${lossClass}">
       <div class="label">Peak Packet Loss</div>
       <div class="value">${(maxLoss * 100).toFixed(1)}%</div>
-      <div class="sub">During match play</div>
+      <div class="sub">Avg ${(avgLoss * 100).toFixed(1)}% during match</div>
     </div>
     <div class="stat-card ${canClass}">
       <div class="label">Peak CAN Usage</div>
       <div class="value">${(maxCan * 100).toFixed(0)}%</div>
       <div class="sub">&gt;70% = congestion risk</div>
+    </div>
+    <div class="stat-card ${canTimeoutClass}">
+      <div class="label">CAN Timeouts</div>
+      <div class="value">${canTimeouts.length}</div>
+      <div class="sub">${canTimeouts.length > 0 ? 'Devices not responding!' : 'All devices OK'}</div>
+    </div>
+    <div class="stat-card ${canStaleClass}">
+      <div class="label">CAN Stale Data</div>
+      <div class="value">${canStale.length}</div>
+      <div class="sub">${canStale.length > 0 ? 'Intermittent CAN failures' : 'No stale data'}</div>
     </div>
     <div class="stat-card info">
       <div class="label">Auto Duration</div>
@@ -2305,6 +2357,134 @@ function renderSummary(logData, eventData) {
       <div class="label">Total Events</div>
       <div class="value">${eventData.events.length}</div>
       <div class="sub">${logData.records.length.toLocaleString()} log records</div>
+    </div>
+  `;
+
+  // ==================== MOTOR ANOMALY DETECTION ====================
+  renderMotorAnomalies(matchRecs);
+}
+
+function renderMotorAnomalies(matchRecs) {
+  const container = document.getElementById('summaryMotorAnomalies');
+  if (!matchRecs || matchRecs.length === 0) { container.innerHTML = ''; return; }
+
+  // Determine channel count
+  const hasPDH = matchRecs.some(r => r.pdpChannels && r.pdpChannels.length >= 24 && r.pdpChannels.slice(16).some(v => v > 0));
+  const numChannels = hasPDH ? 24 : 16;
+
+  // Compute per-channel stats during match
+  const stats = [];
+  for (let ch = 0; ch < numChannels; ch++) {
+    const values = matchRecs.map(r => r.pdpChannels ? r.pdpChannels[ch] : 0).filter(v => v > 0);
+    const peak = values.length ? Math.max(...values) : 0;
+    const avg = values.length ? values.reduce((s,v) => s+v, 0) / values.length : 0;
+    const hasData = peak > 0.5;
+    stats.push({ ch, peak, avg, hasData });
+  }
+
+  // Only consider active motor channels (exclude sensors, VRM, unused)
+  const motorChannels = stats.filter(c => c.hasData && !['Sensors','Power','Unused'].includes(pdhGroup(c.ch)));
+  if (motorChannels.length < 2) { container.innerHTML = ''; return; }
+
+  // Group by function type for smarter comparison
+  // Compare swerve drives to each other, swerve turns to each other, etc.
+  const functionalGroups = {};
+  motorChannels.forEach(c => {
+    const name = pdhName(c.ch);
+    // Extract functional role: "Swerve Drive", "Swerve Turn", "Intake Roller", etc.
+    const role = name.replace(/\s+(RF|LF|BL|BR|1|2|3|4)$/i, '').trim();
+    if (!functionalGroups[role]) functionalGroups[role] = [];
+    functionalGroups[role].push(c);
+  });
+
+  const anomalies = [];
+
+  // Within-group comparison (e.g., Swerve Drive RF vs LF vs BL vs BR)
+  Object.entries(functionalGroups).forEach(([role, channels]) => {
+    if (channels.length < 2) return; // Need at least 2 to compare
+    const groupAvg = channels.reduce((s,c) => s + c.avg, 0) / channels.length;
+    const groupPeakAvg = channels.reduce((s,c) => s + c.peak, 0) / channels.length;
+    if (groupAvg < 0.5) return; // Ignore low-activity groups
+
+    channels.forEach(c => {
+      // Flag if average is >2× the group average, or peak is >2× group peak average
+      const avgRatio = groupAvg > 0 ? c.avg / groupAvg : 0;
+      const peakRatio = groupPeakAvg > 0 ? c.peak / groupPeakAvg : 0;
+
+      if (avgRatio > 2.0) {
+        anomalies.push({
+          ch: c.ch,
+          type: 'high_avg',
+          severity: avgRatio > 3.0 ? 'danger' : 'warning',
+          title: `${pdhName(c.ch)} drawing ${avgRatio.toFixed(1)}× more than other ${role} motors`,
+          detail: `Avg: ${c.avg.toFixed(1)}A vs group avg ${groupAvg.toFixed(1)}A`,
+          ratio: avgRatio
+        });
+      }
+      if (peakRatio > 2.0 && c.peak > 30) {
+        anomalies.push({
+          ch: c.ch,
+          type: 'high_peak',
+          severity: peakRatio > 3.0 ? 'danger' : 'warning',
+          title: `${pdhName(c.ch)} peak ${peakRatio.toFixed(1)}× higher than other ${role} motors`,
+          detail: `Peak: ${c.peak.toFixed(1)}A vs group avg peak ${groupPeakAvg.toFixed(1)}A`,
+          ratio: peakRatio
+        });
+      }
+      // Also flag if significantly lower (might indicate a broken motor/encoder)
+      if (avgRatio < 0.3 && groupAvg > 2.0) {
+        anomalies.push({
+          ch: c.ch,
+          type: 'low_avg',
+          severity: 'warning',
+          title: `${pdhName(c.ch)} drawing much less than other ${role} motors`,
+          detail: `Avg: ${c.avg.toFixed(1)}A vs group avg ${groupAvg.toFixed(1)}A — motor may not be working`,
+          ratio: avgRatio
+        });
+      }
+    });
+  });
+
+  // Also flag any single motor that draws >60A peak (breaker trip territory)
+  motorChannels.forEach(c => {
+    if (c.peak > 60) {
+      anomalies.push({
+        ch: c.ch,
+        type: 'breaker_risk',
+        severity: 'danger',
+        title: `${pdhName(c.ch)} peaked at ${c.peak.toFixed(1)}A — breaker trip risk`,
+        detail: `40A breaker trips at sustained >60A. Check for mechanism binding or stall.`,
+        ratio: c.peak / 40
+      });
+    }
+  });
+
+  // Sort: danger first, then by ratio
+  anomalies.sort((a,b) => (a.severity === 'danger' ? 0 : 1) - (b.severity === 'danger' ? 0 : 1) || b.ratio - a.ratio);
+
+  if (anomalies.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  container.innerHTML = `
+    <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">⚡ Motor Current Anomalies</div>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      ${anomalies.map(a => {
+        const color = a.severity === 'danger' ? 'var(--red)' : 'var(--yellow)';
+        const bg = a.severity === 'danger' ? 'var(--red-bg)' : 'var(--yellow-bg)';
+        const border = a.severity === 'danger' ? 'var(--red-border)' : 'var(--yellow-border)';
+        const icon = a.type === 'low_avg' ? '📉' : a.type === 'breaker_risk' ? '🔌' : '📈';
+        return `
+          <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:${bg};border:1px solid ${border};border-left:4px solid ${color};border-radius:var(--radius);">
+            <span style="font-size:18px;">${icon}</span>
+            <div style="flex:1;">
+              <div style="font-size:13px;font-weight:600;color:${color};">${a.title}</div>
+              <div style="font-size:11px;color:var(--text-secondary);margin-top:2px;font-family:'JetBrains Mono',monospace;">${a.detail}</div>
+            </div>
+            <span style="font-size:11px;padding:3px 8px;border-radius:4px;background:${color}18;color:${color};font-family:'JetBrains Mono',monospace;font-weight:600;">${pdhGroup(a.ch)}</span>
+          </div>`;
+      }).join('')}
     </div>
   `;
 }
