@@ -974,8 +974,8 @@ body {
   <!-- TAB: Match Summary -->
   <div class="tab-panel active" id="tab-summary">
     <div class="health-section" id="healthSection"></div>
-    <div id="summaryMotorAnomalies" style="margin-top:16px;"></div>
     <div id="summaryAlerts" style="margin-top:16px;"></div>
+    <div id="summaryMotorAnomalies" style="margin-top:16px;"></div>
     <div class="mode-bar-section" id="modeBarSection"></div>
     <div class="summary-grid" id="summaryGrid"></div>
   </div>
@@ -3012,7 +3012,7 @@ function renderErrors(eventData) {
                 <div style="font-size:13px;font-weight:600;color:${color};">⚡ ${a.title}</div>
                 <div style="font-size:11px;color:var(--text-secondary);margin-top:2px;font-family:'JetBrains Mono',monospace;">${a.detail}</div>
               </div>
-              <span style="font-size:11px;padding:3px 8px;border-radius:4px;background:${color}18;color:${color};font-family:'JetBrains Mono',monospace;font-weight:600;">${pdhGroup(a.ch)}</span>
+              <button class="chart-toggle" style="font-size:10px;padding:3px 8px;border-color:${color};color:${color};white-space:nowrap;" onclick="isolatePowerChannel(${a.ch})">Isolate on Chart</button>
             </div>`;
         }).join('')}
       </div>
