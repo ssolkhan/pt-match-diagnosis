@@ -2424,7 +2424,6 @@ function renderMotorAnomalySummary() {
   const container = document.getElementById('summaryMotorAnomalies');
   if (motorAnomalies.length === 0) { container.innerHTML = ''; return; }
   container.innerHTML = `
-    <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">\u26a1 Motor Current Anomalies</div>
     <div style="display:flex;flex-direction:column;gap:8px;">
       ${motorAnomalies.map(a => {
         const color = a.severity === 'danger' ? 'var(--red)' : 'var(--yellow)';
@@ -2438,7 +2437,7 @@ function renderMotorAnomalySummary() {
               <div style="font-size:13px;font-weight:600;color:${color};">${a.title}</div>
               <div style="font-size:11px;color:var(--text-secondary);margin-top:2px;font-family:'JetBrains Mono',monospace;">${a.detail}</div>
             </div>
-            <span style="font-size:11px;padding:3px 8px;border-radius:4px;background:${color}18;color:${color};font-family:'JetBrains Mono',monospace;font-weight:600;">${pdhGroup(a.ch)}</span>
+            <button class="chart-toggle" style="font-size:10px;padding:3px 8px;border-color:${color};color:${color};white-space:nowrap;" onclick="isolatePowerChannel(${a.ch})">Isolate on Chart</button>
           </div>`;
       }).join('')}
     </div>
@@ -4005,6 +4004,7 @@ let currentMatchMeta = {};
 let githubFolders = [];
 let githubMatches = [];
 let githubSelectedMatch = null;
+let pendingLogBuffers = null;
 
 // Fetch config on page load
 fetch('/api/config').then(r => r.json()).then(cfg => {
@@ -4109,6 +4109,7 @@ function toggleGithubBrowser(event) {
 
 async function analyzeLogBuffers(logBuf, evBuf, meta = {}, fileMeta = {}) {
   currentMatchMeta = meta;
+  pendingLogBuffers = null;
   if (fileMeta.dslogName || fileMeta.dseventsName) {
     loadedFiles = {
       dslog: { name: fileMeta.dslogName || 'github.dslog' },
@@ -4145,12 +4146,26 @@ async function loadGithubMatch() {
         return r.arrayBuffer();
       })
     ]);
-    setGithubStatus('GitHub logs downloaded. Running analysis...', 'success');
-    await analyzeLogBuffers(logBuf, evBuf, { batteryId: '', eventName: getGithubEventName() }, {
+    pendingLogBuffers = {
+      logBuf,
+      evBuf,
       dslogName: githubSelectedMatch.dslogName,
       dseventsName: githubSelectedMatch.dseventsName
-    });
+    };
+    loadedFiles = {
+      dslog: { name: githubSelectedMatch.dslogName },
+      dsevents: { name: githubSelectedMatch.dseventsName }
+    };
+    document.querySelector('.drop-zone h2').textContent = '✓ GitHub Logs Ready';
+    document.querySelector('.drop-zone p').innerHTML =
+      '<strong style="color:var(--green)">✓ .dslog</strong> + <strong style="color:var(--green)">✓ .dsevents</strong><br>Downloaded from GitHub and ready to analyze';
+    document.querySelector('.drop-zone .hint').style.display = 'none';
+    document.getElementById('metaInputs').style.display = 'block';
+    document.getElementById('batteryIdInput').focus();
+    document.getElementById('eventNameInput').value = getGithubEventName();
+    setGithubStatus('GitHub logs downloaded. Add battery ID if you have it, then analyze.', 'success');
   } catch (error) {
+    pendingLogBuffers = null;
     setGithubStatus(error.message, 'error');
     document.querySelector('.drop-zone h2').textContent = 'Drop Robot Logs Here';
   }
@@ -4191,6 +4206,17 @@ function triggerParse() {
 
   document.querySelector('.drop-zone h2').textContent = 'Parsing logs...';
   document.getElementById('metaInputs').style.display = 'none';
+
+  if (pendingLogBuffers) {
+    const { logBuf, evBuf, dslogName, dseventsName } = pendingLogBuffers;
+    setTimeout(() => {
+      analyzeLogBuffers(logBuf, evBuf, currentMatchMeta, {
+        dslogName,
+        dseventsName
+      }).catch(() => {});
+    }, 50);
+    return;
+  }
 
   Promise.all([
     loadedFiles.dslog.arrayBuffer(),
@@ -4577,6 +4603,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 function resetDashboard() {
   loadedFiles = {};
   githubSelectedMatch = null;
+  pendingLogBuffers = null;
   parsedLog = null;
   parsedEvents = null;
   timelineNeedsRender = false;
