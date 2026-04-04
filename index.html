@@ -2258,7 +2258,10 @@ function renderSummary(logData, eventData) {
   } = metrics;
 
   const healthColor = health >= 75 ? 'var(--green)' : health >= 50 ? 'var(--yellow)' : 'var(--red)';
-  const healthLabel = health >= 75 ? 'Good Match' : health >= 50 ? 'Issues Detected' : 'Critical Problems';
+  const healthLabel = health >= 75 ? 'Good Match' : health >= 50 ? 'Issues Detected' : 'Severe Match Health Issues';
+  const healthCompanion = (critErrors > 0 || warnings > 0)
+    ? `<div style="margin-top:8px;font-size:12px;color:var(--text-secondary);font-family:'JetBrains Mono',monospace;">${critErrors} critical error${critErrors === 1 ? '' : 's'}, ${warnings} warning${warnings === 1 ? '' : 's'}</div>`
+    : '';
 
   const penaltyHTML = penalties.length > 0
     ? `<details style="margin-top:10px;"><summary style="font-size:11px;color:var(--text-muted);cursor:pointer;font-family:'JetBrains Mono',monospace;user-select:none;">▸ Score breakdown (${penalties.length} penalties)</summary><div style="margin-top:6px;font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;line-height:1.6;padding-left:4px;">${penalties.map(p => '• ' + p).join('<br>')}</div></details>`
@@ -2273,6 +2276,7 @@ function renderSummary(logData, eventData) {
       </div>
       <div class="health-label" style="color:${healthColor}">${healthLabel}</div>
     </div>
+    ${healthCompanion}
     ${penaltyHTML}
   `;
 
