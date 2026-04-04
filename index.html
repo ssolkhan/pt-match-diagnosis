@@ -973,6 +973,9 @@ body {
     <div class="chart-container" style="position:relative;height:400px;" id="powerChartContainer">
       <canvas id="powerChart"></canvas>
     </div>
+    <div class="chart-container" style="position:relative;height:80px;margin-top:8px;">
+      <canvas id="powerModeChart"></canvas>
+    </div>
     <div id="powerChannelTable" style="margin-top:16px;"></div>
   </div>
 
@@ -3490,6 +3493,21 @@ function renderPower(logData) {
         delete powerChartInstance.options.scales.x.max;
       }
       powerChartInstance.update();
+      // Sync mode bar
+      if (window._powerModeChartInstance) {
+        const mLabels = window._powerModeChartInstance.data.labels;
+        if (start !== undefined && end !== undefined) {
+          let minL = mLabels[0], maxL = mLabels[mLabels.length - 1];
+          for (const l of mLabels) { if (parseFloat(l) >= start) { minL = l; break; } }
+          for (let i = mLabels.length - 1; i >= 0; i--) { if (parseFloat(mLabels[i]) <= end) { maxL = mLabels[i]; break; } }
+          window._powerModeChartInstance.options.scales.x.min = minL;
+          window._powerModeChartInstance.options.scales.x.max = maxL;
+        } else {
+          delete window._powerModeChartInstance.options.scales.x.min;
+          delete window._powerModeChartInstance.options.scales.x.max;
+        }
+        window._powerModeChartInstance.update();
+      }
       const resetBtn = document.getElementById('pwrResetZoomBtn');
       if (resetBtn) resetBtn.remove();
     });
@@ -3569,6 +3587,69 @@ function renderPower(logData) {
     }
   }
 
+  // Persistent peak annotation plugin — always shows peaks for anomaly channels
+  const anomalyPeaks = [];
+  if (motorAnomalies.length > 0) {
+    const datasets = buildPowerDatasets();
+    motorAnomalies.forEach(a => {
+      const dsIdx = datasets.findIndex(ds => ds.label === pdhName(a.ch));
+      if (dsIdx < 0) return;
+      let peakIdx = -1, peakVal = 0;
+      datasets[dsIdx].data.forEach((pt, i) => {
+        if (pt && pt.y > peakVal) { peakVal = pt.y; peakIdx = i; }
+      });
+      if (peakIdx >= 0) {
+        anomalyPeaks.push({ dsIdx, peakIdx, peakVal, time: datasets[dsIdx].data[peakIdx]?.x, name: pdhName(a.ch), color: pdhColor(a.ch), severity: a.severity });
+      }
+    });
+  }
+
+  const powerPeakAnnotationPlugin = {
+    id: 'powerPeakAnnotations',
+    afterDraw(chart) {
+      if (anomalyPeaks.length === 0) return;
+      const ctx = chart.ctx;
+      ctx.save();
+      anomalyPeaks.forEach(peak => {
+        const meta = chart.getDatasetMeta(peak.dsIdx);
+        if (!meta || !meta.data || !meta.data[peak.peakIdx]) return;
+        const pt = meta.data[peak.peakIdx];
+
+        // Dot at peak
+        ctx.fillStyle = peak.color;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Label
+        const label = `${peak.name}: ${peak.peakVal.toFixed(1)}A`;
+        ctx.font = 'bold 11px "JetBrains Mono", monospace';
+        const tw = ctx.measureText(label).width;
+        const pad = 4;
+        let lx = pt.x - (tw + pad * 2) / 2;
+        if (lx + tw + pad * 2 > chart.width - 10) lx = chart.width - tw - pad * 2 - 10;
+        if (lx < 10) lx = 10;
+        let ly = pt.y - 26;
+        if (ly < chart.scales.y.top + 5) ly = pt.y + 10;
+
+        ctx.fillStyle = peak.severity === 'danger' ? '#C41E1E' : '#B8860B';
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(lx, ly, tw + pad * 2, 18, 3);
+        else ctx.rect(lx, ly, tw + pad * 2, 18);
+        ctx.fill();
+
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, lx + pad, ly + 9);
+      });
+      ctx.restore();
+    }
+  };
+
   if (powerChartInstance) powerChartInstance.destroy();
   powerChartInstance = new Chart(document.getElementById('powerChart'), {
     type: 'line',
@@ -3603,7 +3684,32 @@ function renderPower(logData) {
         y: { title: { display: true, text: 'Current (A)', font: { family: 'JetBrains Mono', size: 11 } }, min: 0, ticks: { font: { family: 'JetBrains Mono', size: 10 } }, grid: { color: 'rgba(0,0,0,0.05)' } }
       }
     },
-    plugins: [powerModeBgPlugin]
+    plugins: [powerModeBgPlugin, powerPeakAnnotationPlugin]
+  });
+
+  // Power mode bar chart — synced to power chart zoom
+  const pwrModeLabels = powerSampled.map(r => r.time_s.toFixed(1));
+  const pwrModeColors = powerSampled.map(r => r.mode === 'auto' ? 'rgba(59,130,246,0.9)' : r.mode === 'teleop' ? 'rgba(34,197,94,0.9)' : r.mode === 'disabled' ? 'rgba(156,163,175,0.6)' : 'rgba(229,231,235,0.5)');
+
+  if (window._powerModeChartInstance) window._powerModeChartInstance.destroy();
+  window._powerModeChartInstance = new Chart(document.getElementById('powerModeChart'), {
+    type: 'bar',
+    data: {
+      labels: pwrModeLabels,
+      datasets: [{ label: 'Mode', data: pwrModeLabels.map(() => 1), backgroundColor: pwrModeColors, barPercentage: 1.0, categoryPercentage: 1.0, borderWidth: 0 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => { const r = powerSampled[ctx.dataIndex]; return r ? r.time_s.toFixed(1) + 's: ' + r.mode.toUpperCase() : ''; } } } },
+      scales: {
+        x: { display: true, ticks: { display: false }, grid: { display: false },
+          title: { display: true, text: 'Robot Mode:   🔵 Auto    🟢 Teleop    ⚫ Disabled    ⬜ Disconnected', font: { family: 'Outfit', size: 12 }, color: '#6B6560' },
+          min: pHasMatch ? pwrModeLabels.find(l => parseFloat(l) >= pMatchStart) : undefined,
+          max: pHasMatch ? [...pwrModeLabels].reverse().find(l => parseFloat(l) <= pMatchEnd) : undefined
+        },
+        y: { display: false, max: 1 }
+      }
+    }
   });
 
   // Peak/Avg table for ALL channels with top consumers highlighted
@@ -4305,6 +4411,7 @@ function resetDashboard() {
   if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
   if (modeChartInstance) { modeChartInstance.destroy(); modeChartInstance = null; }
   if (powerChartInstance) { powerChartInstance.destroy(); powerChartInstance = null; }
+  if (window._powerModeChartInstance) { window._powerModeChartInstance.destroy(); window._powerModeChartInstance = null; }
   if (batteryTrendChartInstance) { batteryTrendChartInstance.destroy(); batteryTrendChartInstance = null; }
   const trendContainer = document.getElementById('batteryTrendContainer');
   if (trendContainer) trendContainer.style.display = 'none';
