@@ -8,6 +8,12 @@ export default function handler(req, res) {
   
   res.status(200).json({
     appsScriptUrl: process.env.APPS_SCRIPT_URL || null,
-    sheetId: process.env.SHEET_ID || null
+    sheetId: process.env.SHEET_ID || null,
+    github: {
+      owner: process.env.GITHUB_TIMBER_OWNER || 'RingOfFireOrg',
+      repo: process.env.GITHUB_TIMBER_REPO || 'Timber',
+      branch: process.env.GITHUB_TIMBER_BRANCH || 'main',
+      basePath: process.env.GITHUB_TIMBER_BASE_PATH || '2026'
+    }
   });
 }

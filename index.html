@@ -918,6 +918,33 @@ body {
     <h2>Drop Robot Logs Here</h2>
     <p>Drag & drop your <strong>.dslog</strong> and <strong>.dsevents</strong> files<br>or click to browse</p>
     <div class="hint">.dslog (telemetry) + .dsevents (events) — both v3 and v4 supported</div>
+    <div style="margin-top:18px;">
+      <button id="githubBrowseBtn" type="button" style="padding:9px 16px;border:1px solid var(--blue-border);background:var(--blue-bg);color:var(--blue);border-radius:8px;font-family:'Outfit',sans-serif;font-size:13px;font-weight:600;cursor:pointer;" onclick="toggleGithubBrowser(event)">Browse Timber Logs on GitHub</button>
+    </div>
+    <div id="githubBrowser" style="display:none; margin-top:18px; text-align:left; max-width:560px; margin-left:auto; margin-right:auto; padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--surface-alt);">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+        <div style="font-size:13px;font-weight:600;color:var(--text-secondary);">GitHub Log Browser</div>
+        <div id="githubRepoLabel" style="font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;"></div>
+        <button type="button" style="margin-left:auto;padding:5px 10px;border:1px solid var(--border);background:var(--surface);border-radius:6px;font-size:11px;cursor:pointer;font-family:'Outfit',sans-serif;" onclick="loadGithubFolders()">↻ Refresh</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-secondary);display:block;margin-bottom:4px;">Folder</label>
+          <select id="githubFolderSelect" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:'Outfit',sans-serif;font-size:13px;background:var(--surface);">
+            <option value="">Loading...</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-secondary);display:block;margin-bottom:4px;">Match Pair</label>
+          <select id="githubMatchSelect" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:12px;background:var(--surface);">
+            <option value="">Choose a folder first</option>
+          </select>
+        </div>
+      </div>
+      <div id="githubMatchMeta" style="margin-top:10px;font-size:12px;color:var(--text-secondary);min-height:18px;"></div>
+      <div id="githubStatus" style="margin-top:10px;font-size:12px;color:var(--text-muted);min-height:18px;"></div>
+      <button id="githubAnalyzeBtn" type="button" style="width:100%;margin-top:12px;padding:10px;background:var(--blue);color:white;border:none;border-radius:8px;font-family:'Outfit',sans-serif;font-size:14px;font-weight:600;cursor:pointer;" onclick="loadGithubMatch()" disabled>Load & Analyze GitHub Match</button>
+    </div>
     <input type="file" id="fileInput" multiple accept=".dslog,.dsevents">
     <div id="metaInputs" style="display:none; margin-top:20px; text-align:left; max-width:360px; margin-left:auto; margin-right:auto;">
       <div style="margin-bottom:10px;">
@@ -2349,6 +2376,7 @@ function renderSummary(logData, eventData) {
   // ==================== MOTOR ANOMALY DETECTION ====================
   computeMotorAnomalies(matchRecs);
   renderMotorAnomalySummary();
+  renderCanSummaryBanner(eventData.events, 'summaryAlerts', 'summaryCan');
 }
 
 let motorAnomalies = [];
@@ -2789,8 +2817,9 @@ function renderTimeline(logData, eventData) {
   });
 }
 
-function renderCanSummaryBanner(events) {
-  const banner = document.getElementById('canSummaryBanner');
+function renderCanSummaryBanner(events, targetId = 'canSummaryBanner', idPrefix = 'canBanner') {
+  const banner = document.getElementById(targetId);
+  if (!banner) return;
 
   // Collect CAN-category events
   const canTimeouts = events.filter(e => e.category === 'CAN' && e.title.includes('Timeout'));
@@ -2864,7 +2893,7 @@ function renderCanSummaryBanner(events) {
     });
 
     html += `
-      <div style="display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--red-bg);border:1px solid var(--red-border);border-left:5px solid var(--red);border-radius:var(--radius);cursor:pointer;" onclick="document.getElementById('canBannerTimeoutDetail').style.display = document.getElementById('canBannerTimeoutDetail').style.display === 'none' ? 'block' : 'none'">
+      <div style="display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--red-bg);border:1px solid var(--red-border);border-left:5px solid var(--red);border-radius:var(--radius);cursor:pointer;" onclick="document.getElementById('${idPrefix}TimeoutDetail').style.display = document.getElementById('${idPrefix}TimeoutDetail').style.display === 'none' ? 'block' : 'none'">
         <span style="font-size:22px;">🚨</span>
         <div style="flex:1;">
           <div style="font-size:14px;font-weight:700;color:var(--red);">CAN Timeouts: ${canTimeouts.length} event${canTimeouts.length > 1 ? 's' : ''}</div>
@@ -2875,7 +2904,7 @@ function renderCanSummaryBanner(events) {
         </div>
         ${firstTime ? '<button class="seek-btn" onclick="event.stopPropagation(); seekTimeline(' + (firstTime.time_s || 0) + ')">📈 Seek</button>' : ''}
       </div>
-      <div id="canBannerTimeoutDetail" style="display:none;padding:10px 18px 14px 40px;font-size:12px;color:var(--text-secondary);line-height:1.8;background:var(--red-bg);border:1px solid var(--red-border);border-top:none;border-radius:0 0 var(--radius) var(--radius);margin-top:-10px;">
+      <div id="${idPrefix}TimeoutDetail" style="display:none;padding:10px 18px 14px 40px;font-size:12px;color:var(--text-secondary);line-height:1.8;background:var(--red-bg);border:1px solid var(--red-border);border-top:none;border-radius:0 0 var(--radius) var(--radius);margin-top:-10px;">
         ${Object.entries(timeoutsByDevice).map(([id, info]) => {
           const channels = PDH_BY_CAN_ID[Number(id)];
           const mechName = channels && channels.length > 0 ? channels[0].name : null;
@@ -2894,7 +2923,7 @@ function renderCanSummaryBanner(events) {
     const borderColor = severity === 'high' ? 'var(--red-border)' : 'var(--yellow-border)';
     const accentColor = severity === 'high' ? 'var(--red)' : 'var(--yellow)';
     html += `
-      <div style="display:flex;align-items:center;gap:12px;padding:14px 18px;background:${bgColor};border:1px solid ${borderColor};border-left:5px solid ${accentColor};border-radius:var(--radius);cursor:pointer;" onclick="document.getElementById('canBannerStaleDetail').style.display = document.getElementById('canBannerStaleDetail').style.display === 'none' ? 'block' : 'none'">
+      <div style="display:flex;align-items:center;gap:12px;padding:14px 18px;background:${bgColor};border:1px solid ${borderColor};border-left:5px solid ${accentColor};border-radius:var(--radius);cursor:pointer;" onclick="document.getElementById('${idPrefix}StaleDetail').style.display = document.getElementById('${idPrefix}StaleDetail').style.display === 'none' ? 'block' : 'none'">
         <span style="font-size:22px;">📡</span>
         <div style="flex:1;">
           <div style="font-size:14px;font-weight:700;color:${accentColor};">CAN Stale Data: ${canStale.length} event${canStale.length > 1 ? 's' : ''}${staleBursts > 0 ? ' (' + staleBursts + ' burst' + (staleBursts > 1 ? 's' : '') + ')' : ''}</div>
@@ -2905,7 +2934,7 @@ function renderCanSummaryBanner(events) {
         </div>
         ${firstTime ? '<button class="seek-btn" onclick="event.stopPropagation(); seekTimeline(' + (firstTime.time_s || 0) + ')">📈 Seek</button>' : ''}
       </div>
-      <div id="canBannerStaleDetail" style="display:none;padding:10px 18px 14px 40px;font-size:12px;color:var(--text-secondary);line-height:1.8;background:${bgColor};border:1px solid ${borderColor};border-top:none;border-radius:0 0 var(--radius) var(--radius);margin-top:-10px;">
+      <div id="${idPrefix}StaleDetail" style="display:none;padding:10px 18px 14px 40px;font-size:12px;color:var(--text-secondary);line-height:1.8;background:${bgColor};border:1px solid ${borderColor};border-top:none;border-radius:0 0 var(--radius) var(--radius);margin-top:-10px;">
         ${(() => {
           const staleByDevice = {};
           canStale.forEach(e => {
@@ -2965,7 +2994,7 @@ function renderErrors(eventData) {
   const events = eventData.events;
 
   // ---- CAN SUMMARY BANNER ----
-  renderCanSummaryBanner(events);
+  renderCanSummaryBanner(events, 'canSummaryBanner', 'canBanner');
 
   // ---- MOTOR ANOMALY BANNER ----
   const maBanner = document.getElementById('motorAnomalyBanner');
@@ -3971,13 +4000,161 @@ let loadedFiles = {};
 // Global config — loaded from Vercel API route
 let APPS_SCRIPT_URL = null;
 let SHEET_ID = null;
+let GITHUB_CONFIG = null;
 let currentMatchMeta = {};
+let githubFolders = [];
+let githubMatches = [];
+let githubSelectedMatch = null;
 
 // Fetch config on page load
 fetch('/api/config').then(r => r.json()).then(cfg => {
   APPS_SCRIPT_URL = cfg.appsScriptUrl;
   SHEET_ID = cfg.sheetId;
+  GITHUB_CONFIG = cfg.github || null;
+  if (GITHUB_CONFIG) {
+    const label = document.getElementById('githubRepoLabel');
+    if (label) label.textContent = `${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo} · ${GITHUB_CONFIG.branch}:${GITHUB_CONFIG.basePath}`;
+  }
 }).catch(() => { /* offline or no config — still works for local analysis */ });
+
+function getGithubEventName() {
+  if (!githubSelectedMatch || !githubSelectedMatch.folder) return '';
+  const parts = githubSelectedMatch.folder.split('/').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : githubSelectedMatch.folder;
+}
+
+function setGithubStatus(message, tone = 'muted') {
+  const el = document.getElementById('githubStatus');
+  if (!el) return;
+  el.textContent = message || '';
+  el.style.color = tone === 'error' ? 'var(--red)' : tone === 'success' ? 'var(--green)' : tone === 'info' ? 'var(--blue)' : 'var(--text-muted)';
+}
+
+function updateGithubMatchMeta() {
+  const meta = document.getElementById('githubMatchMeta');
+  const analyzeBtn = document.getElementById('githubAnalyzeBtn');
+  if (!meta || !analyzeBtn) return;
+  if (!githubSelectedMatch) {
+    meta.textContent = '';
+    analyzeBtn.disabled = true;
+    analyzeBtn.style.opacity = '0.6';
+    analyzeBtn.style.cursor = 'not-allowed';
+    return;
+  }
+  const totalKb = githubSelectedMatch.size ? `${(githubSelectedMatch.size / 1024).toFixed(1)} KB total` : '';
+  meta.textContent = `${githubSelectedMatch.dslogName} + ${githubSelectedMatch.dseventsName}${totalKb ? ' · ' + totalKb : ''}`;
+  analyzeBtn.disabled = false;
+  analyzeBtn.style.opacity = '1';
+  analyzeBtn.style.cursor = 'pointer';
+}
+
+async function loadGithubFolders() {
+  const folderSelect = document.getElementById('githubFolderSelect');
+  const matchSelect = document.getElementById('githubMatchSelect');
+  if (!folderSelect || !matchSelect) return;
+  setGithubStatus('Loading GitHub folders...', 'info');
+  folderSelect.innerHTML = '<option value="">Loading...</option>';
+  matchSelect.innerHTML = '<option value="">Choose a folder first</option>';
+  githubSelectedMatch = null;
+  updateGithubMatchMeta();
+  try {
+    const data = await fetch('/api/github-events').then(r => r.json());
+    if (!data.success) throw new Error(data.error || 'Failed to load folders');
+    githubFolders = data.folders || [];
+    folderSelect.innerHTML = githubFolders.length
+      ? '<option value="">Choose a folder...</option>' + githubFolders.map(f => `<option value="${escapeHtml(f.path)}">${escapeHtml(f.name)} (${f.pairCount})</option>`).join('')
+      : '<option value="">No paired log folders found</option>';
+    setGithubStatus(githubFolders.length ? `Loaded ${githubFolders.length} folder${githubFolders.length === 1 ? '' : 's'} from GitHub.` : 'No paired log folders found.', githubFolders.length ? 'success' : 'muted');
+  } catch (error) {
+    folderSelect.innerHTML = '<option value="">Failed to load folders</option>';
+    setGithubStatus(error.message, 'error');
+  }
+}
+
+async function loadGithubMatchesForFolder(folder) {
+  const matchSelect = document.getElementById('githubMatchSelect');
+  if (!matchSelect) return;
+  githubMatches = [];
+  githubSelectedMatch = null;
+  updateGithubMatchMeta();
+  if (!folder) {
+    matchSelect.innerHTML = '<option value="">Choose a folder first</option>';
+    return;
+  }
+  matchSelect.innerHTML = '<option value="">Loading matches...</option>';
+  setGithubStatus('Loading paired logs...', 'info');
+  try {
+    const url = '/api/github-matches?folder=' + encodeURIComponent(folder);
+    const data = await fetch(url).then(r => r.json());
+    if (!data.success) throw new Error(data.error || 'Failed to load matches');
+    githubMatches = data.matches || [];
+    matchSelect.innerHTML = githubMatches.length
+      ? '<option value="">Choose a match...</option>' + githubMatches.map((m, idx) => `<option value="${idx}">${escapeHtml(m.label)}</option>`).join('')
+      : '<option value="">No log pairs found</option>';
+    setGithubStatus(githubMatches.length ? `Loaded ${githubMatches.length} paired match log${githubMatches.length === 1 ? '' : 's'}.` : 'No complete .dslog/.dsevents pairs found in that folder.', githubMatches.length ? 'success' : 'muted');
+  } catch (error) {
+    matchSelect.innerHTML = '<option value="">Failed to load matches</option>';
+    setGithubStatus(error.message, 'error');
+  }
+}
+
+function toggleGithubBrowser(event) {
+  if (event) event.stopPropagation();
+  const panel = document.getElementById('githubBrowser');
+  if (!panel) return;
+  const opening = panel.style.display === 'none' || !panel.style.display;
+  panel.style.display = opening ? 'block' : 'none';
+  if (opening && githubFolders.length === 0) loadGithubFolders();
+}
+
+async function analyzeLogBuffers(logBuf, evBuf, meta = {}, fileMeta = {}) {
+  currentMatchMeta = meta;
+  if (fileMeta.dslogName || fileMeta.dseventsName) {
+    loadedFiles = {
+      dslog: { name: fileMeta.dslogName || 'github.dslog' },
+      dsevents: { name: fileMeta.dseventsName || 'github.dsevents' }
+    };
+  }
+  try {
+    const logData = parseDSLog(logBuf);
+    const eventData = parseDSEvents(evBuf);
+    renderDashboard(logData, eventData, currentMatchMeta);
+  } catch (err) {
+    alert('Error parsing log files: ' + err.message);
+    console.error(err);
+    document.querySelector('.drop-zone h2').textContent = 'Drop Robot Logs Here';
+    document.querySelector('.drop-zone p').innerHTML = 'Drag & drop your <strong>.dslog</strong> and <strong>.dsevents</strong> files<br>or click to browse';
+    document.querySelector('.drop-zone .hint').style.display = 'block';
+    document.getElementById('metaInputs').style.display = 'none';
+    throw err;
+  }
+}
+
+async function loadGithubMatch() {
+  if (!githubSelectedMatch) return;
+  setGithubStatus('Downloading GitHub log pair...', 'info');
+  document.querySelector('.drop-zone h2').textContent = 'Loading GitHub logs...';
+  try {
+    const [logBuf, evBuf] = await Promise.all([
+      fetch('/api/github-file?path=' + encodeURIComponent(githubSelectedMatch.dslogPath)).then(r => {
+        if (!r.ok) throw new Error('Failed to download .dslog');
+        return r.arrayBuffer();
+      }),
+      fetch('/api/github-file?path=' + encodeURIComponent(githubSelectedMatch.dseventsPath)).then(r => {
+        if (!r.ok) throw new Error('Failed to download .dsevents');
+        return r.arrayBuffer();
+      })
+    ]);
+    setGithubStatus('GitHub logs downloaded. Running analysis...', 'success');
+    await analyzeLogBuffers(logBuf, evBuf, { batteryId: '', eventName: getGithubEventName() }, {
+      dslogName: githubSelectedMatch.dslogName,
+      dseventsName: githubSelectedMatch.dseventsName
+    });
+  } catch (error) {
+    setGithubStatus(error.message, 'error');
+    document.querySelector('.drop-zone h2').textContent = 'Drop Robot Logs Here';
+  }
+}
 
 function handleFiles(files) {
   for (const file of files) {
@@ -4020,18 +4197,10 @@ function triggerParse() {
     loadedFiles.dsevents.arrayBuffer()
   ]).then(([logBuf, evBuf]) => {
     setTimeout(() => {
-      try {
-        const logData = parseDSLog(logBuf);
-        const eventData = parseDSEvents(evBuf);
-        renderDashboard(logData, eventData, currentMatchMeta);
-      } catch (err) {
-        alert('Error parsing log files: ' + err.message);
-        console.error(err);
-        document.querySelector('.drop-zone h2').textContent = 'Drop Robot Logs Here';
-        document.querySelector('.drop-zone p').innerHTML = 'Drag & drop your <strong>.dslog</strong> and <strong>.dsevents</strong> files<br>or click to browse';
-        document.querySelector('.drop-zone .hint').style.display = 'block';
-        document.getElementById('metaInputs').style.display = 'none';
-      }
+      analyzeLogBuffers(logBuf, evBuf, currentMatchMeta, {
+        dslogName: loadedFiles.dslog?.name,
+        dseventsName: loadedFiles.dsevents?.name
+      }).catch(() => {});
     }, 50);
   });
 }
@@ -4341,13 +4510,24 @@ function renderBatteryTrend(allMatches) {
 // Drop zone events
 const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
+const githubFolderSelect = document.getElementById('githubFolderSelect');
+const githubMatchSelect = document.getElementById('githubMatchSelect');
 
 dropZone.addEventListener('click', (e) => {
   // Don't open file dialog if clicking on the meta inputs area
-  if (e.target.closest('#metaInputs')) return;
+  if (e.target.closest('#metaInputs') || e.target.closest('#githubBrowser') || e.target.closest('#githubBrowseBtn')) return;
   fileInput.click();
 });
 fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+if (githubFolderSelect) {
+  githubFolderSelect.addEventListener('change', () => loadGithubMatchesForFolder(githubFolderSelect.value));
+}
+if (githubMatchSelect) {
+  githubMatchSelect.addEventListener('change', () => {
+    githubSelectedMatch = githubMatchSelect.value === '' ? null : githubMatches[Number(githubMatchSelect.value)] || null;
+    updateGithubMatchMeta();
+  });
+}
 
 ['dragenter', 'dragover'].forEach(evtName => {
   dropZone.addEventListener(evtName, (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
@@ -4396,6 +4576,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 function resetDashboard() {
   loadedFiles = {};
+  githubSelectedMatch = null;
   parsedLog = null;
   parsedEvents = null;
   timelineNeedsRender = false;
@@ -4407,9 +4588,13 @@ function resetDashboard() {
   document.getElementById('saveStatus').style.display = 'none';
   document.getElementById('loadNewBtn').style.display = 'none';
   document.getElementById('metaInputs').style.display = 'none';
+  document.getElementById('githubBrowser').style.display = 'none';
   const hintEl = document.querySelector('.drop-zone .hint');
   if (hintEl) hintEl.style.display = 'block';
   document.querySelector('.drop-zone p').innerHTML = 'Drag & drop your <strong>.dslog</strong> and <strong>.dsevents</strong> files<br>or click to browse';
+  document.querySelector('.drop-zone h2').textContent = 'Drop Robot Logs Here';
+  setGithubStatus('');
+  updateGithubMatchMeta();
   if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
   if (modeChartInstance) { modeChartInstance.destroy(); modeChartInstance = null; }
   if (powerChartInstance) { powerChartInstance.destroy(); powerChartInstance = null; }
