@@ -997,6 +997,7 @@ body {
     <div id="powerTopConsumers" style="margin-bottom:16px;"></div>
     <div id="powerChannelToggles" style="margin-bottom:12px;"></div>
     <div class="chart-controls" id="powerChartControls" style="display:flex;flex-wrap:wrap;align-items:center;margin-bottom:8px;"></div>
+    <div id="powerSeriesLegend" style="margin-bottom:10px;"></div>
     <div class="chart-container" style="position:relative;height:400px;" id="powerChartContainer">
       <canvas id="powerChart"></canvas>
     </div>
@@ -1087,6 +1088,16 @@ function pdhName(ch) { return PDH_BY_CHANNEL[ch]?.name || ('Ch ' + ch); }
 function pdhGroup(ch) { return PDH_BY_CHANNEL[ch]?.group || 'Unknown'; }
 function pdhColor(ch) { return PDH_GROUP_COLORS[pdhGroup(ch)] || '#6B6560'; }
 const POWER_GROUP_SHADE_STEPS = [0, 0.16, -0.12, 0.28, -0.24, 0.4, -0.36, 0.5];
+const POWER_SERIES_DASH_PATTERNS = [
+  [],
+  [10, 4],
+  [3, 3],
+  [12, 3, 3, 3],
+  [2, 2],
+  [14, 5],
+  [8, 3, 2, 3],
+  [1, 3]
+];
 
 function clampColorByte(v) {
   return Math.max(0, Math.min(255, Math.round(v)));
@@ -1127,6 +1138,19 @@ function powerSeriesColor(ch) {
   const idx = Math.max(0, groupChannels.indexOf(ch));
   const shade = POWER_GROUP_SHADE_STEPS[idx % POWER_GROUP_SHADE_STEPS.length];
   return shade >= 0 ? mixHex(base, '#ffffff', shade) : mixHex(base, '#000000', Math.abs(shade));
+}
+
+function powerSeriesStyle(ch) {
+  const group = pdhGroup(ch);
+  const groupChannels = PDH_CHANNELS
+    .filter(entry => entry.group === group)
+    .map(entry => entry.channel)
+    .sort((a, b) => a - b);
+  const idx = Math.max(0, groupChannels.indexOf(ch));
+  return {
+    color: powerSeriesColor(ch),
+    dash: POWER_SERIES_DASH_PATTERNS[idx % POWER_SERIES_DASH_PATTERNS.length]
+  };
 }
 
 const MAX_INT64 = BigInt("9223372036854775807");
@@ -3594,14 +3618,15 @@ function renderPower(logData) {
     const datasets = [];
     const activeArr = [...powerActiveChannels].filter(ch => ch >= 0).sort((a,b) => a - b);
     activeArr.forEach(ch => {
-      const color = powerSeriesColor(ch);
+      const style = powerSeriesStyle(ch);
       datasets.push({
         label: pdhName(ch),
         data: powerSampled.map(r => ({ x: r.time_s, y: r.pdpChannels ? r.pdpChannels[ch] : 0 })),
-        backgroundColor: color + '40',
-        borderColor: color,
-        borderWidth: 1.2,
-        fill: true,
+        backgroundColor: style.color + '18',
+        borderColor: style.color,
+        borderWidth: 2.2,
+        borderDash: style.dash,
+        fill: false,
         pointRadius: 0,
         tension: 0.2
       });
@@ -3620,6 +3645,38 @@ function renderPower(logData) {
       });
     }
     return datasets;
+  }
+
+  function renderPowerSeriesLegend() {
+    const legend = document.getElementById('powerSeriesLegend');
+    if (!legend) return;
+    const activeArr = [...powerActiveChannels].filter(ch => ch >= 0).sort((a, b) => a - b);
+    if (activeArr.length === 0) {
+      legend.innerHTML = '';
+      return;
+    }
+    legend.innerHTML = `
+      <div style="display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;">
+        ${activeArr.map(ch => {
+          const style = powerSeriesStyle(ch);
+          return `
+            <div style="display:inline-flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface);font-size:11px;font-family:'JetBrains Mono',monospace;">
+              <svg width="28" height="10" viewBox="0 0 28 10" aria-hidden="true">
+                <line x1="1" y1="5" x2="27" y2="5" stroke="${style.color}" stroke-width="2.5" stroke-dasharray="${style.dash.join(' ')}" stroke-linecap="round"></line>
+              </svg>
+              <span style="color:${style.color};font-weight:600;">${pdhName(ch)}</span>
+              <span style="color:var(--text-muted);">(${ch})</span>
+            </div>`;
+        }).join('')}
+        ${powerActiveChannels.has(-1) ? `
+          <div style="display:inline-flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface);font-size:11px;font-family:'JetBrains Mono',monospace;">
+            <svg width="28" height="10" viewBox="0 0 28 10" aria-hidden="true">
+              <line x1="1" y1="5" x2="27" y2="5" stroke="#1A1714" stroke-width="2.5" stroke-dasharray="5 3" stroke-linecap="round"></line>
+            </svg>
+            <span style="color:#1A1714;font-weight:600;">Total</span>
+          </div>` : ''}
+      </div>
+    `;
   }
 
   // Mode background plugin for power chart — uses linear xScale
@@ -3653,6 +3710,7 @@ function renderPower(logData) {
 
   function updatePowerChart() {
     const datasets = buildPowerDatasets();
+    renderPowerSeriesLegend();
     if (powerChartInstance) {
       // Preserve zoom
       const curMin = powerChartInstance.options.scales.x.min;
@@ -3728,6 +3786,7 @@ function renderPower(logData) {
   };
 
   if (powerChartInstance) powerChartInstance.destroy();
+  renderPowerSeriesLegend();
   powerChartInstance = new Chart(document.getElementById('powerChart'), {
     type: 'line',
     data: { datasets: buildPowerDatasets() },
