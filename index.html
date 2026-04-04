@@ -3679,29 +3679,117 @@ function isolatePowerChannel(ch) {
     if (parsedLog) renderPower(parsedLog);
   }
 
-  // Highlight the anomaly channel by making it thick + others thin
-  if (powerChartInstance) {
-    powerChartInstance.data.datasets.forEach(ds => {
-      const isTarget = ds.label === pdhName(ch);
-      ds.borderWidth = isTarget ? 4 : 0.8;
-      ds.backgroundColor = isTarget ? (ds.borderColor + '60') : (ds.borderColor + '10');
-    });
-    powerChartInstance.update();
+  if (!powerChartInstance) return;
 
-    // Scroll to the chart
-    document.getElementById('powerChartContainer').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  // Find the target dataset and its peak point
+  const targetName = pdhName(ch);
+  const targetColor = pdhColor(ch);
+  let peakIdx = -1, peakVal = 0, targetDsIdx = -1;
 
-    // Reset highlight after 5 seconds
-    setTimeout(() => {
-      if (powerChartInstance) {
-        powerChartInstance.data.datasets.forEach(ds => {
-          ds.borderWidth = 1.2;
-          ds.backgroundColor = ds.borderColor + '40';
-        });
-        powerChartInstance.update();
+  powerChartInstance.data.datasets.forEach((ds, dsIdx) => {
+    const isTarget = ds.label === targetName;
+    ds.borderWidth = isTarget ? 4 : 0.8;
+    ds.backgroundColor = isTarget ? (ds.borderColor + '60') : (ds.borderColor + '10');
+    if (isTarget) {
+      targetDsIdx = dsIdx;
+      ds.data.forEach((pt, i) => {
+        if (pt && pt.y > peakVal) { peakVal = pt.y; peakIdx = i; }
+      });
+    }
+  });
+
+  // Remove any existing peak annotation plugin, then add a new one
+  powerChartInstance.config.plugins = (powerChartInstance.config.plugins || []).filter(p => p.id !== 'peakAnnotation');
+
+  if (peakIdx >= 0 && targetDsIdx >= 0) {
+    const peakTime = powerChartInstance.data.datasets[targetDsIdx].data[peakIdx]?.x;
+    powerChartInstance.config.plugins.push({
+      id: 'peakAnnotation',
+      afterDraw(chart) {
+        const meta = chart.getDatasetMeta(targetDsIdx);
+        if (!meta || !meta.data || !meta.data[peakIdx]) return;
+        const pt = meta.data[peakIdx];
+        const ctx = chart.ctx;
+
+        // Draw vertical dashed line
+        ctx.save();
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = targetColor;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(pt.x, chart.scales.y.top);
+        ctx.lineTo(pt.x, chart.scales.y.bottom);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Draw peak dot
+        ctx.fillStyle = targetColor;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Draw label box
+        const label = `⚡ ${targetName}: ${peakVal.toFixed(1)}A peak at ${peakTime?.toFixed(1) ?? '?'}s`;
+        ctx.font = 'bold 12px "JetBrains Mono", monospace';
+        const textWidth = ctx.measureText(label).width;
+        const boxPad = 6;
+        const boxW = textWidth + boxPad * 2;
+        const boxH = 22;
+        // Position above the point, nudge left if near right edge
+        let boxX = pt.x - boxW / 2;
+        if (boxX + boxW > chart.width - 10) boxX = chart.width - boxW - 10;
+        if (boxX < 10) boxX = 10;
+        let boxY = pt.y - boxH - 12;
+        if (boxY < chart.scales.y.top + 5) boxY = pt.y + 12;
+
+        // Box background
+        ctx.fillStyle = targetColor;
+        ctx.beginPath();
+        if (ctx.roundRect) {
+          ctx.roundRect(boxX, boxY, boxW, boxH, 4);
+        } else {
+          ctx.rect(boxX, boxY, boxW, boxH);
+        }
+        ctx.fill();
+
+        // Arrow from box to point
+        ctx.beginPath();
+        ctx.moveTo(pt.x - 4, boxY + boxH);
+        ctx.lineTo(pt.x, boxY + boxH + 6);
+        ctx.lineTo(pt.x + 4, boxY + boxH);
+        ctx.fill();
+
+        // Label text
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, boxX + boxPad, boxY + boxH / 2);
+
+        ctx.restore();
       }
-    }, 5000);
+    });
   }
+
+  powerChartInstance.update();
+
+  // Scroll to the chart
+  document.getElementById('powerChartContainer').scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+  // Reset highlight after 8 seconds
+  setTimeout(() => {
+    if (powerChartInstance) {
+      powerChartInstance.data.datasets.forEach(ds => {
+        ds.borderWidth = 1.2;
+        ds.backgroundColor = ds.borderColor + '40';
+      });
+      // Remove annotation plugin
+      powerChartInstance.config.plugins = (powerChartInstance.config.plugins || []).filter(p => p.id !== 'peakAnnotation');
+      powerChartInstance.update();
+    }
+  }, 8000);
 }
 
 function togglePowerFullscreen() {
