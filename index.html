@@ -3588,18 +3588,32 @@ function renderPower(logData) {
   }
 
   // Persistent peak annotation plugin — always shows peaks for anomaly channels
+  // Use FULL resolution matchRecs for true peak value, nearest sampled point for chart position
   const anomalyPeaks = [];
   if (motorAnomalies.length > 0) {
     const datasets = buildPowerDatasets();
     motorAnomalies.forEach(a => {
       const dsIdx = datasets.findIndex(ds => ds.label === pdhName(a.ch));
       if (dsIdx < 0) return;
-      let peakIdx = -1, peakVal = 0;
-      datasets[dsIdx].data.forEach((pt, i) => {
-        if (pt && pt.y > peakVal) { peakVal = pt.y; peakIdx = i; }
+
+      // True peak from full-resolution data
+      let truePeak = 0, truePeakTime = 0;
+      matchRecs.forEach(r => {
+        const v = r.pdpChannels ? r.pdpChannels[a.ch] : 0;
+        if (v > truePeak) { truePeak = v; truePeakTime = r.time_s; }
       });
-      if (peakIdx >= 0) {
-        anomalyPeaks.push({ dsIdx, peakIdx, peakVal, time: datasets[dsIdx].data[peakIdx]?.x, name: pdhName(a.ch), color: pdhColor(a.ch), severity: a.severity });
+
+      // Find nearest sampled point index for chart positioning
+      let peakIdx = 0, minDist = Infinity;
+      datasets[dsIdx].data.forEach((pt, i) => {
+        if (pt) {
+          const dist = Math.abs(pt.x - truePeakTime);
+          if (dist < minDist) { minDist = dist; peakIdx = i; }
+        }
+      });
+
+      if (truePeak > 0) {
+        anomalyPeaks.push({ dsIdx, peakIdx, peakVal: truePeak, time: truePeakTime, name: pdhName(a.ch), color: pdhColor(a.ch), severity: a.severity });
       }
     });
   }
@@ -3787,10 +3801,19 @@ function isolatePowerChannel(ch) {
 
   if (!powerChartInstance) return;
 
-  // Find the target dataset and its peak point
+  // Find the target dataset and its peak point (full resolution)
   const targetName = pdhName(ch);
   const targetColor = pdhColor(ch);
-  let peakIdx = -1, peakVal = 0, targetDsIdx = -1;
+  let peakIdx = -1, peakVal = 0, peakTime = 0, targetDsIdx = -1;
+
+  // True peak from full-resolution parsedLog
+  if (parsedLog) {
+    const fullMatchRecs = parsedLog.records.filter(r => r.mode === 'auto' || r.mode === 'teleop');
+    fullMatchRecs.forEach(r => {
+      const v = r.pdpChannels ? r.pdpChannels[ch] : 0;
+      if (v > peakVal) { peakVal = v; peakTime = r.time_s; }
+    });
+  }
 
   powerChartInstance.data.datasets.forEach((ds, dsIdx) => {
     const isTarget = ds.label === targetName;
@@ -3798,8 +3821,13 @@ function isolatePowerChannel(ch) {
     ds.backgroundColor = isTarget ? (ds.borderColor + '60') : (ds.borderColor + '10');
     if (isTarget) {
       targetDsIdx = dsIdx;
+      // Find nearest sampled point for chart positioning
+      let minDist = Infinity;
       ds.data.forEach((pt, i) => {
-        if (pt && pt.y > peakVal) { peakVal = pt.y; peakIdx = i; }
+        if (pt) {
+          const dist = Math.abs(pt.x - peakTime);
+          if (dist < minDist) { minDist = dist; peakIdx = i; }
+        }
       });
     }
   });
@@ -3808,7 +3836,6 @@ function isolatePowerChannel(ch) {
   powerChartInstance.config.plugins = (powerChartInstance.config.plugins || []).filter(p => p.id !== 'peakAnnotation');
 
   if (peakIdx >= 0 && targetDsIdx >= 0) {
-    const peakTime = powerChartInstance.data.datasets[targetDsIdx].data[peakIdx]?.x;
     powerChartInstance.config.plugins.push({
       id: 'peakAnnotation',
       afterDraw(chart) {
