@@ -1265,13 +1265,21 @@ function classifyEvent(text) {
   const lower = text.toLowerCase();
 
   // ---- NOISE: auto-hidden by default ----
-  // Joystick config, vision status, periodic system info, signal logger, NavX retries
   if (lower.includes('joystick') && (lower.includes('axes') || lower.includes('buttons') || lower.includes('povs')))
     return { severity: 'info', category: 'System', title: 'Joystick Configuration', noise: true };
+  // Joystick POV/unplugged warnings — spam every cycle, not actionable in pit
+  if (lower.includes('joystick') && (lower.includes('not available') || lower.includes('unplugged')))
+    return { severity: 'info', category: 'System', title: 'Joystick Unplugged Warning', noise: true };
+  if (lower.includes('reportjoystickunpluggedwarning') || lower.includes('joystickunplugged'))
+    return { severity: 'info', category: 'System', title: 'Joystick Unplugged Warning', noise: true };
   if (lower.includes('photon') || lower.includes('limelight') || lower.includes('camera'))
     return { severity: 'info', category: 'Vision', title: 'Vision Status', noise: true };
   if (lower.includes('info roborio') || lower.includes('info robori'))
     return { severity: 'info', category: 'System', title: 'System Status', noise: true };
+  if (lower.includes('info rail faults') || lower.includes('rail faults:'))
+    return { severity: 'info', category: 'System', title: 'Rail Faults Status', noise: true };
+  if (lower.includes('info communications timeout') || (lower.includes('communications timeout:') && lower.includes('brownouts:')))
+    return { severity: 'info', category: 'System', title: 'System Status Summary', noise: true };
   if (lower.includes('signal logger started') || lower.includes('signal logger:'))
     return { severity: 'info', category: 'System', title: 'Signal Logger Status', noise: true };
   if (lower.includes('navx') && lower.includes('opening'))
@@ -1282,44 +1290,43 @@ function classifyEvent(text) {
     return { severity: 'info', category: 'Code', title: 'Subsystem Init', noise: true };
   if (/^\s*at\s+/.test(text) || /^\s*$/.test(text))
     return { severity: 'info', category: 'Code', title: 'Stack Trace Fragment', noise: true };
-  // Robot code telemetry prints (e.g. [SHOOT], [INTAKE], [ARM], etc.)
   if (/\[(?:SHOOT|INTAKE|ARM|CLIMB|DRIVE|ELEVATOR|WRIST|TURRET|INDEX|FEEDER|AMP)\]/i.test(text))
     return { severity: 'info', category: 'Code', title: 'Robot Telemetry', noise: true };
-  // NetworkTables connection chatter
+  // Generic robot debug telemetry (desiredTx=, output=, setpoint=, etc.)
+  if (/^(<TagVersion>\d+\s+)?<(time|message)>.*(?:desired|output|setpoint|measured|encoder|position|velocity)\s*[=:]/i.test(text))
+    return { severity: 'info', category: 'Code', title: 'Robot Telemetry', noise: true };
   if (lower.includes('nt:') && (lower.includes('connection') || lower.includes('connected') || lower.includes('client')))
     return { severity: 'info', category: 'System', title: 'NetworkTables Connection', noise: true };
-  // CommandScheduler loop overrun (captured separately as Rule 23, noise here)
   if (lower.includes('commandscheduler loop overrun') || lower.includes('commandscheduler loop time'))
     return { severity: 'info', category: 'Code', title: 'CommandScheduler Overrun', noise: true };
-  // SmartDashboard/subsystem periodic timing
   if (/\w+\.periodic\(\):\s*[\d.]+s/i.test(text))
     return { severity: 'info', category: 'Code', title: 'Subsystem Periodic Timing', noise: true };
   if (lower.includes('smartdashboard.updatevalues'))
     return { severity: 'info', category: 'Code', title: 'SmartDashboard Timing', noise: true };
-  // StatusLogger / log4j internal
   if (lower.includes('statuslogger'))
     return { severity: 'info', category: 'System', title: 'Logger Status', noise: true };
-  // Robot program startup banner
   if (lower.includes('robot program start'))
     return { severity: 'info', category: 'Code', title: 'Robot Program Startup', noise: true };
-  // Game-specific data
   if (lower.includes('game specific data'))
     return { severity: 'info', category: 'FMS', title: 'Game Specific Data', noise: true };
-  // Phoenix/CTRE info lines
   if (/\bphoenix\b/.test(lower) && !lower.includes('error') && !lower.includes('fault'))
     return { severity: 'info', category: 'System', title: 'Phoenix Status', noise: true };
 
   // ---- CRITICAL (true errors only) ----
-  if (lower.includes('timed out') || lower.includes('timeout'))
+  // CAN device timeouts — require CAN-specific keywords
+  if ((lower.includes('timed out') && (lower.includes('can') || lower.includes('spark') || lower.includes('talon') || lower.includes('period status'))) ||
+      (lower.includes('timeout') && lower.includes('hal:') && lower.includes('can')))
     return { severity: 'critical', category: 'CAN', title: extractTitle(text, 'CAN Timeout') };
-  if (lower.includes('brownout'))
+  if (lower.includes('brownout') && !lower.includes('info ') && !lower.includes('brownouts:'))
     return { severity: 'critical', category: 'Power', title: 'Brownout Detected' };
-  if (lower.includes('unhandled exception') || lower.includes('error at') || lower.includes('crash'))
+  if (lower.includes('unhandled exception') || (lower.includes('error at') && !lower.includes('warning at')) || lower.includes('crash'))
     return { severity: 'critical', category: 'Code', title: 'Code Exception' };
   if (lower.includes('watchdog') && !lower.includes('info'))
     return { severity: 'critical', category: 'System', title: 'Watchdog Timeout' };
-  if (lower.includes('loop time') && lower.includes('exceeded'))
-    return { severity: 'critical', category: 'System', title: 'Loop Overrun' };
+  // Loop overrun — check both direct text and inside <details> XML
+  if ((lower.includes('loop time') && (lower.includes('overrun') || lower.includes('exceeded'))) ||
+      (lower.includes('<details>') && lower.includes('loop time of') && lower.includes('overrun')))
+    return { severity: 'warning', category: 'Code', title: 'Loop Overrun' };
 
   // ---- WARNINGS ----
   if (lower.includes('lost communication'))
@@ -1328,10 +1335,9 @@ function classifyEvent(text) {
     return { severity: 'warning', category: 'Comms', title: 'Ping Status Change' };
   if (lower.includes('not a spark max') || lower.includes('functionalities may not work'))
     return { severity: 'warning', category: 'CAN', title: 'CAN Device Mismatch' };
-  // CAN stale data / message not received
   if (/message\s+\S*\s*not found/.test(lower) || lower.includes('stale') || lower.includes('rx too old'))
     return { severity: 'warning', category: 'CAN', title: extractTitle(text, 'CAN Stale Data') };
-  if (lower.includes('error') && lower.includes('can'))
+  if (lower.includes('error') && lower.includes('can') && !lower.includes('warning at'))
     return { severity: 'warning', category: 'CAN', title: extractTitle(text, 'CAN Warning') };
   if (lower.includes('update') && (lower.includes('firmware') || lower.includes('radio')))
     return { severity: 'warning', category: 'System', title: 'Firmware Update Needed' };
@@ -1339,7 +1345,11 @@ function classifyEvent(text) {
     return { severity: 'warning', category: 'System', title: 'Low Disk Space' };
   if (lower.includes('reset safe parameters'))
     return { severity: 'warning', category: 'CAN', title: 'CAN Reset Parameters Timeout' };
-  if (lower.includes('warning'))
+  // Generic timeout (non-CAN) — after all specific rules
+  if (lower.includes('timed out') || lower.includes('timeout'))
+    return { severity: 'warning', category: 'System', title: extractTitle(text, 'System Timeout') };
+  // Generic "warning" catch-all — but exclude WPILib stack trace lines like "Warning at edu.wpi.first..."
+  if (lower.includes('warning') && !lower.includes('warning at edu.wpi'))
     return { severity: 'warning', category: 'Code', title: extractTitle(text, 'Code Warning') };
 
   // ---- INFO ----
@@ -1347,6 +1357,9 @@ function classifyEvent(text) {
     return { severity: 'info', category: 'FMS', title: 'FMS Connected' };
   if (lower.includes('code start'))
     return { severity: 'info', category: 'Code', title: 'Robot Code Started' };
+  // WPILib warning-level log lines that aren't actionable warnings
+  if (lower.includes('warning at edu.wpi'))
+    return { severity: 'info', category: 'Code', title: 'WPILib Warning Log', noise: true };
 
   return { severity: 'info', category: 'Other', title: text.substring(0, 60) };
 }
@@ -2837,6 +2850,23 @@ function renderCanSummaryBanner(events) {
   if (canTimeouts.length > 0) {
     const ids = extractDeviceIds(canTimeouts);
     const firstTime = canTimeouts.find(e => e.time_s !== undefined);
+
+    // Group timeouts by device for clean summary
+    const timeoutsByDevice = {};
+    canTimeouts.forEach(e => {
+      const idMatches = [...e.text.matchAll(/IDs?[:\s]+([\d,\s]+)/gi)];
+      const devIds = new Set();
+      idMatches.forEach(m => m[1].split(/[,\s]+/).filter(s => /^\d+$/.test(s)).forEach(id => devIds.add(id)));
+      if (devIds.size === 0) devIds.add('?');
+      devIds.forEach(id => {
+        if (!timeoutsByDevice[id]) timeoutsByDevice[id] = { count: 0, firstTime: e.time_s, reasons: new Set() };
+        timeoutsByDevice[id].count++;
+        // Extract the reason after "timed out while waiting for"
+        const reasonMatch = e.text.match(/timed out while waiting for\s+([^:<]+)/i);
+        if (reasonMatch) timeoutsByDevice[id].reasons.add(reasonMatch[1].trim());
+      });
+    });
+
     html += `
       <div style="display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--red-bg);border:1px solid var(--red-border);border-left:5px solid var(--red);border-radius:var(--radius);cursor:pointer;" onclick="document.getElementById('canBannerTimeoutDetail').style.display = document.getElementById('canBannerTimeoutDetail').style.display === 'none' ? 'block' : 'none'">
         <span style="font-size:22px;">🚨</span>
@@ -2849,9 +2879,13 @@ function renderCanSummaryBanner(events) {
         </div>
         ${firstTime ? '<button class="seek-btn" onclick="event.stopPropagation(); seekTimeline(' + (firstTime.time_s || 0) + ')">📈 Seek</button>' : ''}
       </div>
-      <div id="canBannerTimeoutDetail" style="display:none;padding:8px 18px 12px 40px;font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--text-secondary);line-height:1.7;background:var(--red-bg);border:1px solid var(--red-border);border-top:none;border-radius:0 0 var(--radius) var(--radius);margin-top:-10px;">
-        ${canTimeouts.slice(0, 5).map(e => '<div>• ' + escapeHtml(e.text.substring(0, 150)) + '</div>').join('')}
-        ${canTimeouts.length > 5 ? '<div style="color:var(--text-muted);">...and ' + (canTimeouts.length - 5) + ' more</div>' : ''}
+      <div id="canBannerTimeoutDetail" style="display:none;padding:10px 18px 14px 40px;font-size:12px;color:var(--text-secondary);line-height:1.8;background:var(--red-bg);border:1px solid var(--red-border);border-top:none;border-radius:0 0 var(--radius) var(--radius);margin-top:-10px;">
+        ${Object.entries(timeoutsByDevice).map(([id, info]) => {
+          const channels = PDH_BY_CAN_ID[Number(id)];
+          const mechName = channels && channels.length > 0 ? channels[0].name : null;
+          const reasons = [...info.reasons].join(', ') || 'CAN timeout';
+          return '<div style="margin-bottom:4px;"><strong style="font-family:\'JetBrains Mono\',monospace;">CAN ' + id + (mechName ? ' (' + mechName + ')' : '') + '</strong> — ' + info.count + '× timeout' + (info.count > 1 ? 's' : '') + ' · ' + reasons + '</div>';
+        }).join('')}
       </div>`;
   }
 
@@ -2875,9 +2909,27 @@ function renderCanSummaryBanner(events) {
         </div>
         ${firstTime ? '<button class="seek-btn" onclick="event.stopPropagation(); seekTimeline(' + (firstTime.time_s || 0) + ')">📈 Seek</button>' : ''}
       </div>
-      <div id="canBannerStaleDetail" style="display:none;padding:8px 18px 12px 40px;font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--text-secondary);line-height:1.7;background:${bgColor};border:1px solid ${borderColor};border-top:none;border-radius:0 0 var(--radius) var(--radius);margin-top:-10px;">
-        ${canStale.slice(0, 5).map(e => '<div>• ' + escapeHtml(e.text.substring(0, 150)) + '</div>').join('')}
-        ${canStale.length > 5 ? '<div style="color:var(--text-muted);">...and ' + (canStale.length - 5) + ' more</div>' : ''}
+      <div id="canBannerStaleDetail" style="display:none;padding:10px 18px 14px 40px;font-size:12px;color:var(--text-secondary);line-height:1.8;background:${bgColor};border:1px solid ${borderColor};border-top:none;border-radius:0 0 var(--radius) var(--radius);margin-top:-10px;">
+        ${(() => {
+          const staleByDevice = {};
+          canStale.forEach(e => {
+            const devIds = new Set();
+            const idMatches = [...e.text.matchAll(/IDs?[:\s]+([\d,\s]+)/gi)];
+            idMatches.forEach(m => m[1].split(/[,\s]+/).filter(s => /^\d+$/.test(s)).forEach(id => devIds.add(id)));
+            const msgMatch = e.text.match(/Message\s+(\d+)\s+not found/i);
+            if (msgMatch) devIds.add(msgMatch[1]);
+            if (devIds.size === 0) devIds.add('?');
+            devIds.forEach(id => {
+              if (!staleByDevice[id]) staleByDevice[id] = { count: 0 };
+              staleByDevice[id].count++;
+            });
+          });
+          return Object.entries(staleByDevice).map(([id, info]) => {
+            const channels = PDH_BY_CAN_ID[Number(id)];
+            const mechName = channels && channels.length > 0 ? channels[0].name : null;
+            return '<div style="margin-bottom:4px;"><strong style="font-family:\'JetBrains Mono\',monospace;">CAN ' + id + (mechName ? ' (' + mechName + ')' : '') + '</strong> — ' + info.count + '× stale event' + (info.count > 1 ? 's' : '') + '</div>';
+          }).join('');
+        })()}
       </div>`;
   }
 
@@ -3610,17 +3662,45 @@ function renderPower(logData) {
 // Power chart fullscreen
 // Isolate a single channel on the power chart (called from anomaly buttons)
 function isolatePowerChannel(ch) {
-  powerActiveChannels.clear();
-  powerActiveChannels.add(ch);
-  // Re-render power if needed
+  // Switch to power tab if not already there
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelector('[data-tab="power"]').classList.add('active');
+  document.getElementById('tab-power').classList.add('active');
+
   if (powerNeedsRender && parsedLog) {
     renderPower(parsedLog);
     powerNeedsRender = false;
-  } else if (powerChartInstance) {
-    // Just update the chart datasets
-    // Need to trigger a re-render of toggles and chart
-    // The simplest way: re-render the whole power tab
+  }
+
+  // Ensure the anomaly channel is visible
+  if (!powerActiveChannels.has(ch)) {
+    powerActiveChannels.add(ch);
     if (parsedLog) renderPower(parsedLog);
+  }
+
+  // Highlight the anomaly channel by making it thick + others thin
+  if (powerChartInstance) {
+    powerChartInstance.data.datasets.forEach(ds => {
+      const isTarget = ds.label === pdhName(ch);
+      ds.borderWidth = isTarget ? 4 : 0.8;
+      ds.backgroundColor = isTarget ? (ds.borderColor + '60') : (ds.borderColor + '10');
+    });
+    powerChartInstance.update();
+
+    // Scroll to the chart
+    document.getElementById('powerChartContainer').scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    // Reset highlight after 5 seconds
+    setTimeout(() => {
+      if (powerChartInstance) {
+        powerChartInstance.data.datasets.forEach(ds => {
+          ds.borderWidth = 1.2;
+          ds.backgroundColor = ds.borderColor + '40';
+        });
+        powerChartInstance.update();
+      }
+    }, 5000);
   }
 }
 
