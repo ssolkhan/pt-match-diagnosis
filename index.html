@@ -1086,6 +1086,48 @@ const PDH_GROUP_COLORS = {
 function pdhName(ch) { return PDH_BY_CHANNEL[ch]?.name || ('Ch ' + ch); }
 function pdhGroup(ch) { return PDH_BY_CHANNEL[ch]?.group || 'Unknown'; }
 function pdhColor(ch) { return PDH_GROUP_COLORS[pdhGroup(ch)] || '#6B6560'; }
+const POWER_GROUP_SHADE_STEPS = [0, 0.16, -0.12, 0.28, -0.24, 0.4, -0.36, 0.5];
+
+function clampColorByte(v) {
+  return Math.max(0, Math.min(255, Math.round(v)));
+}
+
+function hexToRgb(hex) {
+  const normalized = hex.replace('#', '');
+  if (normalized.length !== 6) return null;
+  return {
+    r: parseInt(normalized.slice(0, 2), 16),
+    g: parseInt(normalized.slice(2, 4), 16),
+    b: parseInt(normalized.slice(4, 6), 16)
+  };
+}
+
+function rgbToHex({ r, g, b }) {
+  return '#' + [r, g, b].map(v => clampColorByte(v).toString(16).padStart(2, '0')).join('');
+}
+
+function mixHex(baseHex, targetHex, amount) {
+  const base = hexToRgb(baseHex);
+  const target = hexToRgb(targetHex);
+  if (!base || !target) return baseHex;
+  return rgbToHex({
+    r: base.r + (target.r - base.r) * amount,
+    g: base.g + (target.g - base.g) * amount,
+    b: base.b + (target.b - base.b) * amount
+  });
+}
+
+function powerSeriesColor(ch) {
+  const group = pdhGroup(ch);
+  const base = pdhColor(ch);
+  const groupChannels = PDH_CHANNELS
+    .filter(entry => entry.group === group)
+    .map(entry => entry.channel)
+    .sort((a, b) => a - b);
+  const idx = Math.max(0, groupChannels.indexOf(ch));
+  const shade = POWER_GROUP_SHADE_STEPS[idx % POWER_GROUP_SHADE_STEPS.length];
+  return shade >= 0 ? mixHex(base, '#ffffff', shade) : mixHex(base, '#000000', Math.abs(shade));
+}
 
 const MAX_INT64 = BigInt("9223372036854775807");
 const LV_EPOCH = new Date(Date.UTC(1904, 0, 1));
@@ -3415,7 +3457,7 @@ function renderPower(logData) {
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
         ${channelStats.map(c => {
-          const color = pdhColor(c.ch);
+          const color = powerSeriesColor(c.ch);
           const active = powerActiveChannels.has(c.ch);
           const label = pdhName(c.ch);
           return `
@@ -3552,7 +3594,7 @@ function renderPower(logData) {
     const datasets = [];
     const activeArr = [...powerActiveChannels].filter(ch => ch >= 0).sort((a,b) => a - b);
     activeArr.forEach(ch => {
-      const color = pdhColor(ch);
+      const color = powerSeriesColor(ch);
       datasets.push({
         label: pdhName(ch),
         data: powerSampled.map(r => ({ x: r.time_s, y: r.pdpChannels ? r.pdpChannels[ch] : 0 })),
@@ -3634,7 +3676,7 @@ function renderPower(logData) {
         if (pt && pt.y > peakVal) { peakVal = pt.y; peakIdx = i; }
       });
       if (peakIdx >= 0) {
-        anomalyPeaks.push({ dsIdx, peakIdx, peakVal, time: datasets[dsIdx].data[peakIdx]?.x, name: pdhName(a.ch), color: pdhColor(a.ch), severity: a.severity });
+        anomalyPeaks.push({ dsIdx, peakIdx, peakVal, time: datasets[dsIdx].data[peakIdx]?.x, name: pdhName(a.ch), color: powerSeriesColor(a.ch), severity: a.severity });
       }
     });
   }
@@ -3772,7 +3814,7 @@ function renderPower(logData) {
             const isAnomaly = anomalyChSet.has(c.ch);
             const anomalyInfo = motorAnomalies.find(a => a.ch === c.ch);
             const barPct = sorted.length && sorted[0].peak > 0 ? (c.peak / sorted[0].peak * 100) : 0;
-            const color = pdhColor(c.ch);
+            const color = powerSeriesColor(c.ch);
             const cfg = PDH_BY_CHANNEL[c.ch];
             const rowBg = isAnomaly ? (anomalyInfo?.severity === 'danger' ? 'background:var(--red-bg);' : 'background:var(--yellow-bg);') : isTop ? 'background:var(--red-bg);' : '';
             return `
@@ -3824,7 +3866,7 @@ function isolatePowerChannel(ch) {
 
   // Find the target dataset and its peak point
   const targetName = pdhName(ch);
-  const targetColor = pdhColor(ch);
+  const targetColor = powerSeriesColor(ch);
   let peakIdx = -1, peakVal = 0, peakTime = 0, targetDsIdx = -1;
 
   powerChartInstance.data.datasets.forEach((ds, dsIdx) => {
