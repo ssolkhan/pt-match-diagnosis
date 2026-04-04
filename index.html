@@ -1062,6 +1062,108 @@ function pdhColor(ch) { return PDH_GROUP_COLORS[pdhGroup(ch)] || '#6B6560'; }
 
 const MAX_INT64 = BigInt("9223372036854775807");
 const LV_EPOCH = new Date(Date.UTC(1904, 0, 1));
+const UINT64_SCALE = 18446744073709551616;
+
+function readLabviewTimestampSeconds(view, pos) {
+  const seconds = view.getBigInt64(pos);
+  const fractional = view.getBigUint64(pos + 8);
+  return Number(seconds) + Number(fractional) / UINT64_SCALE;
+}
+
+function computeCanPeak(matchRecords) {
+  const stableCan = matchRecords.filter(r => r.canUsage !== null && r.canUsage < 0.70);
+  const highCanSustained = matchRecords.filter((r, i, arr) => {
+    if (r.canUsage === null || r.canUsage < 0.70) return false;
+    const prev = i > 0 ? arr[i - 1] : null;
+    const next = i < arr.length - 1 ? arr[i + 1] : null;
+    return (prev && prev.canUsage !== null && prev.canUsage > 0.30) &&
+           (next && next.canUsage !== null && next.canUsage > 0.30);
+  });
+  const allValidCan = [...stableCan, ...highCanSustained];
+  return allValidCan.length ? Math.max(...allValidCan.map(r => r.canUsage)) : 0;
+}
+
+function computeBatteryResistanceMetrics(matchRecords) {
+  let worstResistance = 0;
+  let worstResTime = 0;
+  let highResCount = 0;
+  for (let i = 10; i < matchRecords.length; i++) {
+    const v1 = matchRecords[i - 10].voltage;
+    const v2 = matchRecords[i].voltage;
+    const c1 = matchRecords[i - 10].totalCurrent || 0;
+    const c2 = matchRecords[i].totalCurrent || 0;
+    const deltaI = c2 - c1;
+    if (v1 !== null && v2 !== null && deltaI > 40) {
+      const resistance = Math.abs(v1 - v2) / deltaI;
+      if (resistance > worstResistance) {
+        worstResistance = resistance;
+        worstResTime = matchRecords[i].time_s;
+      }
+      if (resistance > 0.025) highResCount++;
+    }
+  }
+  return { worstResistance, worstResTime, highResCount };
+}
+
+function summarizeMatchMetrics(records, eventData) {
+  const matchRecs = records.filter(r => r.mode === 'auto' || r.mode === 'teleop');
+  const autoRecs = records.filter(r => r.mode === 'auto');
+  const teleopRecs = records.filter(r => r.mode === 'teleop');
+  const validV = matchRecs.filter(r => r.voltage !== null);
+  const validLoss = matchRecs.filter(r => r.packetLoss !== null);
+  const minV = validV.length ? Math.min(...validV.map(r => r.voltage)) : 0;
+  const avgV = validV.length ? validV.reduce((s, r) => s + r.voltage, 0) / validV.length : 0;
+  const maxV = validV.length ? Math.max(...validV.map(r => r.voltage)) : 0;
+  const maxLoss = validLoss.length ? Math.max(...validLoss.map(r => r.packetLoss)) : 0;
+  const avgLoss = validLoss.length ? validLoss.reduce((s, r) => s + r.packetLoss, 0) / validLoss.length : 0;
+  const maxCan = computeCanPeak(matchRecs);
+  const brownouts = records.filter(r => r.brownout).length;
+  const critErrors = eventData.events.filter(e => e.severity === 'critical' && !e.noise).length;
+  const warnings = eventData.events.filter(e => e.severity === 'warning' && !e.noise).length;
+  const canTimeouts = eventData.events.filter(e => e.category === 'CAN' && e.title.includes('Timeout'));
+  const canStale = eventData.events.filter(e => e.category === 'CAN' && e.title.includes('Stale'));
+  const avgCpu = matchRecs.length ? matchRecs.reduce((s, r) => s + r.rioCpu * 100, 0) / matchRecs.length : 0;
+  const maxCpu = matchRecs.length ? Math.max(...matchRecs.map(r => r.rioCpu * 100)) : 0;
+  const avgTrip = matchRecs.length ? matchRecs.reduce((s, r) => s + r.tripTime, 0) / matchRecs.length : 0;
+  const batteryMetrics = computeBatteryResistanceMetrics(matchRecs);
+
+  let modeFlips = 0;
+  for (let i = 1; i < records.length; i++) {
+    if (records[i].mode !== records[i - 1].mode) modeFlips++;
+  }
+  const totalDuration = records.length * 0.02;
+  const flickerRate = modeFlips / (totalDuration || 1);
+
+  let health = 100;
+  const penalties = [];
+  if (minV < 8) { health -= 40; penalties.push('Voltage collapse (<8V): −40'); }
+  else if (minV < 10) { health -= 25; penalties.push('Severe voltage drop (<10V): −25'); }
+  else if (minV < 11) { health -= 10; penalties.push('Voltage sag (<11V): −10'); }
+  if (brownouts > 5) { health -= 25; penalties.push('Multiple brownouts (>5): −25'); }
+  else if (brownouts > 0) { health -= 15; penalties.push(`Brownouts (${brownouts}): −15`); }
+  if (maxLoss > 0.20) { health -= 15; penalties.push('Severe packet loss (>20%): −15'); }
+  else if (maxLoss > 0.05) { health -= 8; penalties.push('Elevated packet loss (>5%): −8'); }
+  if (flickerRate > 2.0) { health -= 15; penalties.push('Severe comms flicker: −15'); }
+  else if (flickerRate > 0.5) { health -= 5; penalties.push('Comms instability: −5'); }
+  if (canTimeouts.length > 3) { health -= 15; penalties.push(`CAN timeouts (${canTimeouts.length}): −15`); }
+  else if (canTimeouts.length > 0) { health -= 8; penalties.push(`CAN timeout (${canTimeouts.length}): −8`); }
+  if (canStale.length > 10) { health -= 10; penalties.push(`CAN stale data (${canStale.length}): −10`); }
+  else if (canStale.length > 0) { health -= 5; penalties.push(`CAN stale data (${canStale.length}): −5`); }
+  if (maxCan > 0.70) { health -= 8; penalties.push('High CAN utilization (>70%): −8'); }
+  if (critErrors > 3) { health -= 15; penalties.push(`Many critical errors (${critErrors}): −15`); }
+  else if (critErrors > 0) { health -= 8; penalties.push(`Critical errors (${critErrors}): −8`); }
+  if (avgCpu > 85) { health -= 8; penalties.push('High avg CPU (>85%): −8'); }
+  else if (maxCpu > 95) { health -= 5; penalties.push('CPU spike (>95%): −5'); }
+  if (autoRecs.length * 0.02 < 5 && autoRecs.length > 0) { health -= 10; penalties.push('Short auto (<5s): −10'); }
+  if (matchRecs.length === 0) { health = 5; penalties.push('No match activity: forced to 5'); }
+  health = Math.max(0, Math.min(100, health));
+
+  return {
+    matchRecs, autoRecs, teleopRecs, minV, avgV, maxV, maxLoss, avgLoss, maxCan,
+    brownouts, critErrors, warnings, canTimeouts, canStale, avgCpu, maxCpu,
+    avgTrip, flickerRate, penalties, health, batteryMetrics
+  };
+}
 
 // ==================== DSLOG PARSER ====================
 function parseDSLog(buffer) {
@@ -1198,21 +1300,14 @@ function parseDSEvents(buffer) {
   let pos = 4;
 
   // Read start timestamp
-  const secHi = view.getInt32(pos); pos += 4;
-  const secLo = view.getUint32(pos); pos += 4;
-  const startSeconds = secLo; // Use low 32 bits (safe for dates through ~2040)
-  const fracHi = view.getUint32(pos); pos += 4;
-  const fracLo = view.getUint32(pos); pos += 4;
+  const startSeconds = readLabviewTimestampSeconds(view, pos);
+  pos += 16;
   const startTime = new Date(LV_EPOCH.getTime() + startSeconds * 1000);
 
   // dsevents format: each record = 16-byte LV timestamp + 4-byte message length + message bytes
   while (pos + 20 <= buffer.byteLength) {
-    // Read 8-byte LV timestamp (seconds since 1904-01-01)
-    const evSecHi = view.getUint32(pos); pos += 4;
-    const evSecLo = view.getUint32(pos); pos += 4;
-    // Use only the low 32 bits for seconds (high word is 0 for dates through ~2040)
-    const evSeconds = evSecLo;
-    pos += 8; // skip fractional timestamp
+    const evSeconds = readLabviewTimestampSeconds(view, pos);
+    pos += 16;
 
     // Read 4-byte message length (big-endian)
     if (pos + 4 > buffer.byteLength) break;
@@ -1464,17 +1559,7 @@ function runDiagnostics(logData, eventData) {
   const validPacketLoss = matchRecords.filter(r => r.packetLoss !== null);
   const maxPacketLoss = validPacketLoss.length ? Math.max(...validPacketLoss.map(r => r.packetLoss)) : 0;
   const avgPacketLoss = validPacketLoss.length ? validPacketLoss.reduce((s, r) => s + r.packetLoss, 0) / validPacketLoss.length : 0;
-  // Filter CAN to stable match records only (exclude comms-flicker transients)
-  const validCan = matchRecords.filter((r, i) => r.canUsage !== null && r.canUsage < 0.70);
-  // Include >70% only if sustained (not a single-record spike)
-  const highCanSustained = matchRecords.filter((r, i, arr) => {
-    if (r.canUsage === null || r.canUsage < 0.70) return false;
-    const prev = i > 0 ? arr[i-1] : null;
-    const next = i < arr.length-1 ? arr[i+1] : null;
-    return (prev && prev.canUsage !== null && prev.canUsage > 0.30) && (next && next.canUsage !== null && next.canUsage > 0.30);
-  });
-  const allValidCan = [...validCan, ...highCanSustained];
-  const maxCan = allValidCan.length ? Math.max(...allValidCan.map(r => r.canUsage)) : 0;
+  const maxCan = computeCanPeak(matchRecords);
   const totalDuration = records.length * 0.02;
   const autoDuration = autoRecords.length * 0.02;
   const teleopDuration = teleopRecords.length * 0.02;
@@ -1824,24 +1909,7 @@ function runDiagnostics(logData, eventData) {
   }
 
   // ---- RULE 22: Predictive Battery Health (Internal Resistance) ----
-  // Monitor high-acceleration events (current increase >40A in <200ms = 10 records)
-  let worstResistance = 0;
-  let worstResTime = 0;
-  let highResCount = 0;
-  for (let i = 10; i < matchRecords.length; i++) {
-    const v1 = matchRecords[i-10].voltage;
-    const v2 = matchRecords[i].voltage;
-    const c1 = matchRecords[i-10].totalCurrent || 0;
-    const c2 = matchRecords[i].totalCurrent || 0;
-    const deltaI = c2 - c1;
-    // Look for high-acceleration events: current increase >40A in 200ms
-    if (v1 !== null && v2 !== null && deltaI > 40) {
-      const deltaV = Math.abs(v1 - v2);
-      const R = deltaV / deltaI;
-      if (R > worstResistance) { worstResistance = R; worstResTime = matchRecords[i].time_s; }
-      if (R > 0.025) highResCount++;
-    }
-  }
+  const { worstResistance, worstResTime, highResCount } = computeBatteryResistanceMetrics(matchRecords);
   if (highResCount > 5 && worstResistance > 0.025) {
     diagnostics.investigate.push({
       time_s: worstResTime,
@@ -2119,42 +2187,7 @@ function renderDashboard(logData, eventData, meta) {
 
   // ---- AUTO-SAVE TO GOOGLE SHEETS ----
   const records = logData.records;
-  const matchRecs = records.filter(r => r.mode === 'auto' || r.mode === 'teleop');
-  const validV = matchRecs.filter(r => r.voltage !== null);
-  const minV = validV.length ? Math.min(...validV.map(r => r.voltage)) : 0;
-  const avgV = validV.length ? validV.reduce((s,r) => s + r.voltage, 0) / validV.length : 0;
-  const validLoss1 = matchRecs.filter(r => r.packetLoss !== null);
-  const maxLoss = validLoss1.length ? Math.max(...validLoss1.map(r => r.packetLoss)) : 0;
-  const avgTrip = matchRecs.length ? matchRecs.reduce((s,r) => s + r.tripTime, 0) / matchRecs.length : 0;
-  let modeFlips = 0;
-  for (let i = 1; i < records.length; i++) if (records[i].mode !== records[i-1].mode) modeFlips++;
-  const flickerRate = modeFlips / (records.length * 0.02 || 1);
-  const validCan3 = matchRecs.filter(r => r.canUsage !== null && r.canUsage < 0.995);
-  const maxCan = validCan3.length ? Math.max(...validCan3.map(r => r.canUsage)) : 0;
-  const avgCpu = matchRecs.length ? matchRecs.reduce((s,r) => s + r.rioCpu * 100, 0) / matchRecs.length : 0;
-  const brownouts = records.filter(r => r.brownout).length;
-  const critErrors = eventData.events.filter(e => e.severity === 'critical' && !e.noise).length;
-  const warnings = eventData.events.filter(e => e.severity === 'warning' && !e.noise).length;
-  const autoRecs = records.filter(r => r.mode === 'auto');
-  const teleopRecs = records.filter(r => r.mode === 'teleop');
-
-  // Health score (expanded — matches renderSummary)
-  const canTimeoutsS = eventData.events.filter(e => e.category === 'CAN' && e.title.includes('Timeout'));
-  const canStaleS = eventData.events.filter(e => e.category === 'CAN' && e.title.includes('Stale'));
-  const maxCpuS = matchRecs.length ? Math.max(...matchRecs.map(r => r.rioCpu * 100)) : 0;
-  let health = 100;
-  if (minV < 8) health -= 40; else if (minV < 10) health -= 25; else if (minV < 11) health -= 10;
-  if (brownouts > 5) health -= 25; else if (brownouts > 0) health -= 15;
-  if (maxLoss > 0.20) health -= 15; else if (maxLoss > 0.05) health -= 8;
-  if (flickerRate > 2.0) health -= 15; else if (flickerRate > 0.5) health -= 5;
-  if (canTimeoutsS.length > 3) health -= 15; else if (canTimeoutsS.length > 0) health -= 8;
-  if (canStaleS.length > 10) health -= 10; else if (canStaleS.length > 0) health -= 5;
-  if (maxCan > 0.70) health -= 8;
-  if (critErrors > 3) health -= 15; else if (critErrors > 0) health -= 8;
-  if (avgCpu > 85) health -= 8; else if (maxCpuS > 95) health -= 5;
-  if (autoRecs.length * 0.02 < 5 && autoRecs.length > 0) health -= 10;
-  if (matchRecs.length === 0) health = 5;
-  health = Math.max(0, Math.min(100, health));
+  const metrics = summarizeMatchMetrics(records, eventData);
 
   // Fix now items summary
   const fixItems = diagnostics ? diagnostics.fixNow.map(d => d.title.replace(/[^\w\s]/g, '').trim()).join('; ') : '';
@@ -2169,100 +2202,33 @@ function renderDashboard(logData, eventData, meta) {
     matchNumber,
     batteryId: meta.batteryId || '',
     logFilename,
-    healthScore: health,
-    minVoltage: +minV.toFixed(2),
-    avgVoltage: +avgV.toFixed(2),
-    maxPacketLoss: +(maxLoss * 100).toFixed(1),
-    avgTripTime: +avgTrip.toFixed(1),
-    commsFlickerRate: +flickerRate.toFixed(1),
-    peakCanUsage: +(maxCan * 100).toFixed(1),
-    avgCpu: +avgCpu.toFixed(0),
-    brownoutCount: brownouts,
-    autoDuration: +(autoRecs.length * 0.02).toFixed(1),
-    teleopDuration: +(teleopRecs.length * 0.02).toFixed(1),
-    criticalErrors: critErrors,
-    warnings,
+    healthScore: metrics.health,
+    minVoltage: +metrics.minV.toFixed(2),
+    avgVoltage: +metrics.avgV.toFixed(2),
+    maxPacketLoss: +(metrics.maxLoss * 100).toFixed(1),
+    avgTripTime: +metrics.avgTrip.toFixed(1),
+    commsFlickerRate: +metrics.flickerRate.toFixed(1),
+    peakCanUsage: +(metrics.maxCan * 100).toFixed(1),
+    avgCpu: +metrics.avgCpu.toFixed(0),
+    brownoutCount: metrics.brownouts,
+    autoDuration: +(metrics.autoRecs.length * 0.02).toFixed(1),
+    teleopDuration: +(metrics.teleopRecs.length * 0.02).toFixed(1),
+    criticalErrors: metrics.critErrors,
+    warnings: metrics.warnings,
     fixNowItems: fixItems,
-    batteryResistance: 0,
+    batteryResistance: +(metrics.batteryMetrics.worstResistance * 1000).toFixed(1),
     season: new Date().getFullYear()
   });
 }
 
 function renderSummary(logData, eventData) {
   const records = logData.records;
-  const matchRecs = records.filter(r => r.mode === 'auto' || r.mode === 'teleop');
-  const autoRecs = records.filter(r => r.mode === 'auto');
-  const teleopRecs = records.filter(r => r.mode === 'teleop');
-  const validV = matchRecs.filter(r => r.voltage !== null);
-  const minV = validV.length ? Math.min(...validV.map(r => r.voltage)) : 0;
-  const avgV = validV.length ? validV.reduce((s, r) => s + r.voltage, 0) / validV.length : 0;
-  const maxV = validV.length ? Math.max(...validV.map(r => r.voltage)) : 0;
-  const validLoss2 = matchRecs.filter(r => r.packetLoss !== null);
-  const maxLoss = validLoss2.length ? Math.max(...validLoss2.map(r => r.packetLoss)) : 0;
-  const avgLoss = validLoss2.length ? validLoss2.reduce((s,r) => s + r.packetLoss, 0) / validLoss2.length : 0;
-  const validCan4 = matchRecs.filter(r => r.canUsage !== null && r.canUsage < 0.995);
-  const maxCan = validCan4.length ? Math.max(...validCan4.map(r => r.canUsage)) : 0;
-  const brownouts = records.filter(r => r.brownout).length;
-  const critErrors = eventData.events.filter(e => e.severity === 'critical' && !e.noise).length;
-  const warnings = eventData.events.filter(e => e.severity === 'warning' && !e.noise).length;
-  const canTimeouts = eventData.events.filter(e => e.category === 'CAN' && e.title.includes('Timeout'));
-  const canStale = eventData.events.filter(e => e.category === 'CAN' && e.title.includes('Stale'));
-  const avgCpu = matchRecs.length ? matchRecs.reduce((s,r) => s + r.rioCpu * 100, 0) / matchRecs.length : 0;
-  const maxCpu = matchRecs.length ? Math.max(...matchRecs.map(r => r.rioCpu * 100)) : 0;
-
-  // Comms flicker rate
-  let modeFlips = 0;
-  for (let i = 1; i < records.length; i++) if (records[i].mode !== records[i-1].mode) modeFlips++;
-  const totalDuration = records.length * 0.02;
-  const flickerRate = modeFlips / (totalDuration || 1);
-
-  // ==================== EXPANDED HEALTH SCORE ====================
-  let health = 100;
-  const penalties = [];
-
-  // Voltage
-  if (minV < 8) { health -= 40; penalties.push('Voltage collapse (<8V): −40'); }
-  else if (minV < 10) { health -= 25; penalties.push('Severe voltage drop (<10V): −25'); }
-  else if (minV < 11) { health -= 10; penalties.push('Voltage sag (<11V): −10'); }
-
-  // Brownouts
-  if (brownouts > 5) { health -= 25; penalties.push('Multiple brownouts (>5): −25'); }
-  else if (brownouts > 0) { health -= 15; penalties.push(`Brownouts (${brownouts}): −15`); }
-
-  // Packet loss (fraction 0.0–1.0)
-  if (maxLoss > 0.20) { health -= 15; penalties.push('Severe packet loss (>20%): −15'); }
-  else if (maxLoss > 0.05) { health -= 8; penalties.push('Elevated packet loss (>5%): −8'); }
-
-  // Comms flicker
-  if (flickerRate > 2.0) { health -= 15; penalties.push('Severe comms flicker: −15'); }
-  else if (flickerRate > 0.5) { health -= 5; penalties.push('Comms instability: −5'); }
-
-  // CAN timeouts
-  if (canTimeouts.length > 3) { health -= 15; penalties.push(`CAN timeouts (${canTimeouts.length}): −15`); }
-  else if (canTimeouts.length > 0) { health -= 8; penalties.push(`CAN timeout (${canTimeouts.length}): −8`); }
-
-  // CAN stale data
-  if (canStale.length > 10) { health -= 10; penalties.push(`CAN stale data (${canStale.length}): −10`); }
-  else if (canStale.length > 0) { health -= 5; penalties.push(`CAN stale data (${canStale.length}): −5`); }
-
-  // CAN bus utilization
-  if (maxCan > 0.70) { health -= 8; penalties.push('High CAN utilization (>70%): −8'); }
-
-  // Critical errors
-  if (critErrors > 3) { health -= 15; penalties.push(`Many critical errors (${critErrors}): −15`); }
-  else if (critErrors > 0) { health -= 8; penalties.push(`Critical errors (${critErrors}): −8`); }
-
-  // CPU
-  if (avgCpu > 85) { health -= 8; penalties.push('High avg CPU (>85%): −8'); }
-  else if (maxCpu > 95) { health -= 5; penalties.push('CPU spike (>95%): −5'); }
-
-  // Auto duration
-  if (autoRecs.length * 0.02 < 5 && autoRecs.length > 0) { health -= 10; penalties.push('Short auto (<5s): −10'); }
-
-  // No match
-  if (matchRecs.length === 0) { health = 5; penalties.push('No match activity: forced to 5'); }
-
-  health = Math.max(0, Math.min(100, health));
+  const metrics = summarizeMatchMetrics(records, eventData);
+  const {
+    matchRecs, autoRecs, teleopRecs, minV, avgV, maxV, maxLoss, avgLoss, maxCan,
+    brownouts, critErrors, warnings, canTimeouts, canStale, avgCpu, maxCpu,
+    penalties, health
+  } = metrics;
 
   const healthColor = health >= 75 ? 'var(--green)' : health >= 50 ? 'var(--yellow)' : 'var(--red)';
   const healthLabel = health >= 75 ? 'Good Match' : health >= 50 ? 'Issues Detected' : 'Critical Problems';
@@ -2452,12 +2418,39 @@ function renderMotorAnomalySummary() {
 }
 
 function renderTimeline(logData, eventData) {
-  // Downsample records for chart performance (target ~2000 points)
+  // Downsample records for chart performance (target ~2000 points) while
+  // preserving brief extremes that would otherwise disappear from the graph.
   const records = logData.records;
   const step = Math.max(1, Math.floor(records.length / 2000));
   const sampled = [];
-  for (let i = 0; i < records.length; i += step) {
-    sampled.push(records[i]);
+  if (step === 1) {
+    sampled.push(...records);
+  } else {
+    for (let i = 0; i < records.length; i += step) {
+      const window = records.slice(i, Math.min(i + step, records.length));
+      if (!window.length) continue;
+      const first = window[0];
+      const minVoltageRecord = window.reduce((best, r) => {
+        if (r.voltage === null) return best;
+        if (!best || best.voltage === null || r.voltage < best.voltage) return r;
+        return best;
+      }, null);
+      const maxRiskRecord = window.reduce((best, r) => {
+        const score = Math.max(
+          r.packetLoss !== null ? r.packetLoss * 100 : -1,
+          r.canUsage !== null ? r.canUsage * 100 : -1,
+          r.rioCpu * 100,
+          r.tripTime
+        );
+        if (!best || score > best.score) return { record: r, score };
+        return best;
+      }, null);
+      const unique = [];
+      [first, minVoltageRecord, maxRiskRecord?.record, window[window.length - 1]].forEach(r => {
+        if (r && !unique.includes(r)) unique.push(r);
+      });
+      sampled.push(...unique);
+    }
   }
 
   // ---- Compute match phase boundaries ----
@@ -2567,7 +2560,7 @@ function renderTimeline(logData, eventData) {
       switch (name) {
         case 'Voltage': y = r.voltage; break;
         case 'Packet Loss': y = r.packetLoss !== null ? r.packetLoss * 100 : null; break;
-        case 'CAN Usage': y = (r.canUsage !== null && r.canUsage < 0.995) ? r.canUsage * 100 : null; break;
+        case 'CAN Usage': y = r.canUsage !== null ? r.canUsage * 100 : null; break;
         case 'roboRIO CPU': y = r.rioCpu * 100; break;
         case 'Trip Time': y = r.tripTime; break;
         default: y = null;
@@ -3473,10 +3466,20 @@ function renderPower(logData) {
     ).join('') +
     '<button class="chart-toggle" id="pwrFullscreenBtn" style="margin-left:auto;" onclick="togglePowerFullscreen()">⛶ Fullscreen</button>';
 
-  // Downsample (before zoom handlers so powerSampled is available)
+  // Downsample with peak preservation — for each window, keep the record with
+  // highest total current so brief spikes aren't lost on the chart
   const step = Math.max(1, Math.floor(records.length / 1500));
   powerSampled = [];
-  for (let i = 0; i < records.length; i += step) powerSampled.push(records[i]);
+  for (let i = 0; i < records.length; i += step) {
+    const windowEnd = Math.min(i + step, records.length);
+    let bestRec = records[i];
+    let maxCurrent = records[i].totalCurrent || 0;
+    for (let j = i + 1; j < windowEnd; j++) {
+      const tc = records[j].totalCurrent || 0;
+      if (tc > maxCurrent) { maxCurrent = tc; bestRec = records[j]; }
+    }
+    powerSampled.push(bestRec);
+  }
 
   document.querySelectorAll('#powerChartControls .pwr-zoom-preset').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -3587,33 +3590,19 @@ function renderPower(logData) {
     }
   }
 
-  // Persistent peak annotation plugin — always shows peaks for anomaly channels
-  // Use FULL resolution matchRecs for true peak value, nearest sampled point for chart position
+  // Persistent peak annotation plugin — uses downsampled data (peak-preserving)
   const anomalyPeaks = [];
   if (motorAnomalies.length > 0) {
     const datasets = buildPowerDatasets();
     motorAnomalies.forEach(a => {
       const dsIdx = datasets.findIndex(ds => ds.label === pdhName(a.ch));
       if (dsIdx < 0) return;
-
-      // True peak from full-resolution data
-      let truePeak = 0, truePeakTime = 0;
-      matchRecs.forEach(r => {
-        const v = r.pdpChannels ? r.pdpChannels[a.ch] : 0;
-        if (v > truePeak) { truePeak = v; truePeakTime = r.time_s; }
-      });
-
-      // Find nearest sampled point index for chart positioning
-      let peakIdx = 0, minDist = Infinity;
+      let peakIdx = -1, peakVal = 0;
       datasets[dsIdx].data.forEach((pt, i) => {
-        if (pt) {
-          const dist = Math.abs(pt.x - truePeakTime);
-          if (dist < minDist) { minDist = dist; peakIdx = i; }
-        }
+        if (pt && pt.y > peakVal) { peakVal = pt.y; peakIdx = i; }
       });
-
-      if (truePeak > 0) {
-        anomalyPeaks.push({ dsIdx, peakIdx, peakVal: truePeak, time: truePeakTime, name: pdhName(a.ch), color: pdhColor(a.ch), severity: a.severity });
+      if (peakIdx >= 0) {
+        anomalyPeaks.push({ dsIdx, peakIdx, peakVal, time: datasets[dsIdx].data[peakIdx]?.x, name: pdhName(a.ch), color: pdhColor(a.ch), severity: a.severity });
       }
     });
   }
@@ -3801,19 +3790,10 @@ function isolatePowerChannel(ch) {
 
   if (!powerChartInstance) return;
 
-  // Find the target dataset and its peak point (full resolution)
+  // Find the target dataset and its peak point
   const targetName = pdhName(ch);
   const targetColor = pdhColor(ch);
   let peakIdx = -1, peakVal = 0, peakTime = 0, targetDsIdx = -1;
-
-  // True peak from full-resolution parsedLog
-  if (parsedLog) {
-    const fullMatchRecs = parsedLog.records.filter(r => r.mode === 'auto' || r.mode === 'teleop');
-    fullMatchRecs.forEach(r => {
-      const v = r.pdpChannels ? r.pdpChannels[ch] : 0;
-      if (v > peakVal) { peakVal = v; peakTime = r.time_s; }
-    });
-  }
 
   powerChartInstance.data.datasets.forEach((ds, dsIdx) => {
     const isTarget = ds.label === targetName;
@@ -3821,13 +3801,8 @@ function isolatePowerChannel(ch) {
     ds.backgroundColor = isTarget ? (ds.borderColor + '60') : (ds.borderColor + '10');
     if (isTarget) {
       targetDsIdx = dsIdx;
-      // Find nearest sampled point for chart positioning
-      let minDist = Infinity;
       ds.data.forEach((pt, i) => {
-        if (pt) {
-          const dist = Math.abs(pt.x - peakTime);
-          if (dist < minDist) { minDist = dist; peakIdx = i; }
-        }
+        if (pt && pt.y > peakVal) { peakVal = pt.y; peakIdx = i; peakTime = pt.x; }
       });
     }
   });
@@ -4073,9 +4048,9 @@ function saveMatchToSheet(summary) {
     headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify(summary),
     mode: 'no-cors' // Apps Script requires this
-  }).then(() => {
+  }).then((response) => {
     status.className = 'save-status saved';
-    status.textContent = '✓ Saved';
+    status.textContent = response && response.type !== 'opaque' && response.ok ? '✓ Saved' : '✓ Save sent';
     setTimeout(() => { status.style.display = 'none'; }, 3000);
   }).catch(err => {
     status.className = 'save-status error';
