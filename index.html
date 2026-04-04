@@ -1088,7 +1088,7 @@ function parseDSLog(buffer) {
     const offset = headerSize + i * recordSize;
     const tripTime = view.getUint8(offset) / 2.0;
     const packetLossRaw = view.getUint8(offset + 1);
-    const packetLoss = (packetLossRaw >= 0xFE) ? null : 0.04 * packetLossRaw; // fraction 0.0-1.0; 0xFF=no data, 0xFE=no data
+    const packetLoss = packetLossRaw > 25 ? null : 0.04 * packetLossRaw; // fraction 0.0-1.0; raw 0-25 = 0-100%, anything above is sentinel/invalid
     const voltageRaw = view.getUint16(offset + 2);
     const voltage = voltageRaw === 0xFFFF ? null : voltageRaw / 256.0;
     const rioCpu = 0.01 * view.getUint8(offset + 4) / 2.0;
