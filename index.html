@@ -1218,6 +1218,34 @@ function getMatchRelativeLabel(time_s, bounds = window._matchBounds) {
   return formatMatchClock(time_s - bounds.enabledStart);
 }
 
+const matchClockAxisPlugin = {
+  id: 'matchClockAxis',
+  afterDraw(chart, _args, opts) {
+    const xScale = chart.scales?.x;
+    if (!xScale || !opts?.enabled) return;
+    const ctx = chart.ctx;
+    const tickValues = xScale.ticks || [];
+    const labelY = xScale.bottom + 20;
+    const titleY = xScale.bottom + 42;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = opts.color || '#6B6560';
+    ctx.font = '10px "JetBrains Mono", monospace';
+    tickValues.forEach((tick, idx) => {
+      const value = typeof tick.value === 'number' ? tick.value : Number(tick.value);
+      const label = getMatchRelativeLabel(value, opts.bounds);
+      if (!label) return;
+      const x = xScale.getPixelForTick(idx);
+      if (!isFinite(x)) return;
+      ctx.fillText(label, x, labelY);
+    });
+    ctx.font = '11px "JetBrains Mono", monospace';
+    ctx.fillText(opts.title || 'Match Time (Auto Start = 0:00)', (xScale.left + xScale.right) / 2, titleY);
+    ctx.restore();
+  }
+};
+
 // ==================== DSLOG PARSER ====================
 function parseDSLog(buffer) {
   const view = new DataView(buffer);
@@ -2586,17 +2614,9 @@ function renderTimeline(logData, eventData) {
     if (start !== undefined && end !== undefined) {
       chartInstance.options.scales.x.min = start;
       chartInstance.options.scales.x.max = end;
-      if (chartInstance.options.scales.xMatch) {
-        chartInstance.options.scales.xMatch.min = start;
-        chartInstance.options.scales.xMatch.max = end;
-      }
     } else {
       delete chartInstance.options.scales.x.min;
       delete chartInstance.options.scales.x.max;
-      if (chartInstance.options.scales.xMatch) {
-        delete chartInstance.options.scales.xMatch.min;
-        delete chartInstance.options.scales.xMatch.max;
-      }
     }
     chartInstance.update();
     // Sync mode chart
@@ -2699,26 +2719,8 @@ function renderTimeline(logData, eventData) {
       x: {
         type: 'linear',
         display: true,
-        position: 'bottom',
-        stack: 'time',
-        stackWeight: 1,
         title: { display: true, text: 'Time (s)', font: { family: 'JetBrains Mono', size: 11 } },
         ticks: { font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 20 }
-      },
-      xMatch: {
-        type: 'linear',
-        position: 'bottom',
-        display: hasMatchData,
-        stack: 'time',
-        stackWeight: 1,
-        grid: { drawOnChartArea: false, drawTicks: true },
-        border: { color: 'rgba(0,0,0,0.12)' },
-        title: { display: hasMatchData, text: 'Match Time (Auto Start = 0:00)', font: { family: 'JetBrains Mono', size: 11 } },
-        ticks: {
-          font: { family: 'JetBrains Mono', size: 10 },
-          maxTicksLimit: 20,
-          callback: (value) => getMatchRelativeLabel(value)
-        }
       }
     };
 
@@ -2726,8 +2728,6 @@ function renderTimeline(logData, eventData) {
     if (hasMatchData) {
       scales.x.min = matchStart;
       scales.x.max = matchEnd;
-      scales.xMatch.min = matchStart;
-      scales.xMatch.max = matchEnd;
     }
     
     if (hasVoltage) {
@@ -2768,14 +2768,8 @@ function renderTimeline(logData, eventData) {
       chartInstance.data.datasets = datasets;
       chartInstance.options.scales = scales;
       // Restore zoom (overrides buildChart's default auto-crop)
-      if (curMin !== undefined) {
-        chartInstance.options.scales.x.min = curMin;
-        if (chartInstance.options.scales.xMatch) chartInstance.options.scales.xMatch.min = curMin;
-      }
-      if (curMax !== undefined) {
-        chartInstance.options.scales.x.max = curMax;
-        if (chartInstance.options.scales.xMatch) chartInstance.options.scales.xMatch.max = curMax;
-      }
+      if (curMin !== undefined) chartInstance.options.scales.x.min = curMin;
+      if (curMax !== undefined) chartInstance.options.scales.x.max = curMax;
       chartInstance.update();
     }
   }
@@ -2789,6 +2783,7 @@ function renderTimeline(logData, eventData) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      layout: { padding: { bottom: hasMatchData ? 48 : 12 } },
       interaction: { mode: 'index', intersect: false },
       onHover: (event, elements) => {
         if (elements.length > 0 && parsedEvents) {
@@ -2815,6 +2810,7 @@ function renderTimeline(logData, eventData) {
           }
         }
       },
+      scales,
       plugins: {
         legend: { position: 'top', labels: { font: { family: 'Outfit', size: 12 }, usePointStyle: true, pointStyle: 'line' } },
         tooltip: {
@@ -2839,11 +2835,15 @@ function renderTimeline(logData, eventData) {
               return nearby.length ? ['--- Nearby Events ---', ...nearby] : [];
             }
           }
+        },
+        matchClockAxis: {
+          enabled: hasMatchData,
+          bounds: window._matchBounds,
+          title: 'Match Time (Auto Start = 0:00)'
         }
-      },
-      scales
+      }
     },
-    plugins: [modeBgPlugin]
+    plugins: [modeBgPlugin, matchClockAxisPlugin]
   });
 
   // Mini mode chart with legend
@@ -3314,10 +3314,6 @@ function seekTimeline(time_s) {
     // Zoom to ±5s window around the event
     chartInstance.options.scales.x.min = Math.max(0, time_s - 5);
     chartInstance.options.scales.x.max = time_s + 5;
-    if (chartInstance.options.scales.xMatch) {
-      chartInstance.options.scales.xMatch.min = Math.max(0, time_s - 5);
-      chartInstance.options.scales.xMatch.max = time_s + 5;
-    }
     chartInstance.update();
 
     // Find closest data point for tooltip
@@ -3364,17 +3360,9 @@ function seekTimeline(time_s) {
         if (bounds && bounds.hasMatchData) {
           chartInstance.options.scales.x.min = bounds.matchStart;
           chartInstance.options.scales.x.max = bounds.matchEnd;
-          if (chartInstance.options.scales.xMatch) {
-            chartInstance.options.scales.xMatch.min = bounds.matchStart;
-            chartInstance.options.scales.xMatch.max = bounds.matchEnd;
-          }
         } else {
           delete chartInstance.options.scales.x.min;
           delete chartInstance.options.scales.x.max;
-          if (chartInstance.options.scales.xMatch) {
-            delete chartInstance.options.scales.xMatch.min;
-            delete chartInstance.options.scales.xMatch.max;
-          }
         }
         chartInstance.update();
         // Sync mode chart
@@ -3616,17 +3604,9 @@ function renderPower(logData) {
       if (start !== undefined && end !== undefined) {
         powerChartInstance.options.scales.x.min = start;
         powerChartInstance.options.scales.x.max = end;
-        if (powerChartInstance.options.scales.xMatch) {
-          powerChartInstance.options.scales.xMatch.min = start;
-          powerChartInstance.options.scales.xMatch.max = end;
-        }
       } else {
         delete powerChartInstance.options.scales.x.min;
         delete powerChartInstance.options.scales.x.max;
-        if (powerChartInstance.options.scales.xMatch) {
-          delete powerChartInstance.options.scales.xMatch.min;
-          delete powerChartInstance.options.scales.xMatch.max;
-        }
       }
       powerChartInstance.update();
       // Sync mode bar
@@ -3750,14 +3730,8 @@ function renderPower(logData) {
       const curMin = powerChartInstance.options.scales.x.min;
       const curMax = powerChartInstance.options.scales.x.max;
       powerChartInstance.data.datasets = datasets;
-      if (curMin !== undefined) {
-        powerChartInstance.options.scales.x.min = curMin;
-        if (powerChartInstance.options.scales.xMatch) powerChartInstance.options.scales.xMatch.min = curMin;
-      }
-      if (curMax !== undefined) {
-        powerChartInstance.options.scales.x.max = curMax;
-        if (powerChartInstance.options.scales.xMatch) powerChartInstance.options.scales.xMatch.max = curMax;
-      }
+      if (curMin !== undefined) powerChartInstance.options.scales.x.min = curMin;
+      if (curMax !== undefined) powerChartInstance.options.scales.x.max = curMax;
       powerChartInstance.update();
     }
   }
@@ -3833,6 +3807,7 @@ function renderPower(logData) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      layout: { padding: { bottom: pHasMatch ? 48 : 12 } },
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
@@ -3848,40 +3823,25 @@ function renderPower(logData) {
               return `${r.time_s.toFixed(1)}s${matchLabel ? ` • Match ${matchLabel}` : ''} — ${r.mode.toUpperCase()} — Total: ${(r.totalCurrent||0).toFixed(1)}A`;
             }
           }
+        },
+        matchClockAxis: {
+          enabled: pHasMatch,
+          bounds: window._matchBounds,
+          title: 'Match Time (Auto Start = 0:00)'
         }
       },
       scales: {
         x: {
           type: 'linear',
-          position: 'bottom',
-          stack: 'time',
-          stackWeight: 1,
           title: { display: true, text: 'Time (s)', font: { family: 'JetBrains Mono', size: 11 } },
           ticks: { font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 20 },
-          min: pHasMatch ? pMatchStart : undefined,
-          max: pHasMatch ? pMatchEnd : undefined
-        },
-        xMatch: {
-          type: 'linear',
-          position: 'bottom',
-          display: pHasMatch,
-          stack: 'time',
-          stackWeight: 1,
-          grid: { drawOnChartArea: false, drawTicks: true },
-          border: { color: 'rgba(0,0,0,0.12)' },
-          title: { display: pHasMatch, text: 'Match Time (Auto Start = 0:00)', font: { family: 'JetBrains Mono', size: 11 } },
-          ticks: {
-            font: { family: 'JetBrains Mono', size: 10 },
-            maxTicksLimit: 20,
-            callback: (value) => getMatchRelativeLabel(value)
-          },
           min: pHasMatch ? pMatchStart : undefined,
           max: pHasMatch ? pMatchEnd : undefined
         },
         y: { title: { display: true, text: 'Current (A)', font: { family: 'JetBrains Mono', size: 11 } }, min: 0, ticks: { font: { family: 'JetBrains Mono', size: 10 } }, grid: { color: 'rgba(0,0,0,0.05)' } }
       }
     },
-    plugins: [powerModeBgPlugin, powerPeakAnnotationPlugin]
+    plugins: [powerModeBgPlugin, powerPeakAnnotationPlugin, matchClockAxisPlugin]
   });
 
   // Power mode bar chart — synced to power chart zoom
@@ -4129,10 +4089,6 @@ function seekPowerChart(time_s) {
 
     powerChartInstance.options.scales.x.min = Math.max(0, time_s - 5);
     powerChartInstance.options.scales.x.max = time_s + 5;
-    if (powerChartInstance.options.scales.xMatch) {
-      powerChartInstance.options.scales.xMatch.min = Math.max(0, time_s - 5);
-      powerChartInstance.options.scales.xMatch.max = time_s + 5;
-    }
     powerChartInstance.update();
 
     // Add reset zoom button
@@ -4148,17 +4104,9 @@ function seekPowerChart(time_s) {
         if (bounds && bounds.hasMatchData) {
           powerChartInstance.options.scales.x.min = bounds.matchStart;
           powerChartInstance.options.scales.x.max = bounds.matchEnd;
-          if (powerChartInstance.options.scales.xMatch) {
-            powerChartInstance.options.scales.xMatch.min = bounds.matchStart;
-            powerChartInstance.options.scales.xMatch.max = bounds.matchEnd;
-          }
         } else {
           delete powerChartInstance.options.scales.x.min;
           delete powerChartInstance.options.scales.x.max;
-          if (powerChartInstance.options.scales.xMatch) {
-            delete powerChartInstance.options.scales.xMatch.min;
-            delete powerChartInstance.options.scales.xMatch.max;
-          }
         }
         powerChartInstance.update();
         btn.remove();
