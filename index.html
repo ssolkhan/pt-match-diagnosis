@@ -1218,6 +1218,50 @@ function getMatchRelativeLabel(time_s, bounds = window._matchBounds) {
   return formatMatchClock(time_s - bounds.enabledStart);
 }
 
+function getNearbyEventTooltipLines(events, time_s, windowSeconds = 3, limit = 3) {
+  if (!events || time_s === undefined || time_s === null) return [];
+  const nearby = events.filter(e => Math.abs((e.time_s ?? Infinity) - time_s) < windowSeconds);
+  const rankByDistance = (a, b) => Math.abs((a.time_s ?? 0) - time_s) - Math.abs((b.time_s ?? 0) - time_s);
+  const actionable = nearby
+    .filter(e => e.severity === 'critical' || e.severity === 'warning')
+    .sort((a, b) => {
+      const sevRank = { critical: 0, warning: 1 };
+      const rankDiff = (sevRank[a.severity] ?? 2) - (sevRank[b.severity] ?? 2);
+      if (rankDiff !== 0) return rankDiff;
+      return rankByDistance(a, b);
+    });
+
+  const meaningfulInfo = nearby
+    .filter(e => {
+      if (e.severity !== 'info') return false;
+      const text = `${e.category || ''} ${e.title || ''}`.toLowerCase();
+      return [
+        'code start',
+        'radio',
+        'ping',
+        'brownout',
+        'stale',
+        'timeout',
+        'disconnect',
+        'reconnect',
+        'loop overrun',
+        'watchdog',
+        'roborio',
+        'can'
+      ].some(keyword => text.includes(keyword));
+    })
+    .sort(rankByDistance);
+
+  const chosen = actionable.length > 0
+    ? actionable.slice(0, limit)
+    : meaningfulInfo.slice(0, Math.min(2, limit));
+
+  const lines = chosen.map(e => `[${(e.severity || 'info').toUpperCase()}] ${e.title.substring(0, 50)}`);
+  const nearbyLabel = actionable.length > 0 ? '--- Nearby Warnings / Errors ---' : '--- Nearby Log Messages ---';
+  const nearbyDisplay = lines.length ? [nearbyLabel, ...lines] : [];
+  return nearbyDisplay;
+}
+
 const matchClockAxisPlugin = {
   id: 'matchClockAxis',
   afterDraw(chart, _args, opts) {
@@ -2828,11 +2872,7 @@ function renderTimeline(logData, eventData) {
             footer: (items) => {
               if (!parsedEvents || !items.length) return '';
               const t = sampled[items[0].dataIndex].time_s;
-              const nearby = parsedEvents.events
-                .filter(e => Math.abs(e.time_s - t) < 3 && e.severity !== 'info')
-                .slice(0, 3)
-                .map(e => `[${e.severity.toUpperCase()}] ${e.title.substring(0, 50)}`);
-              return nearby.length ? ['--- Nearby Events ---', ...nearby] : [];
+              return getNearbyEventTooltipLines(parsedEvents.events, t);
             }
           }
         },
@@ -3814,6 +3854,8 @@ function renderPower(logData) {
         tooltip: {
           titleFont: { family: 'JetBrains Mono', size: 11 },
           bodyFont: { family: 'JetBrains Mono', size: 10 },
+          footerFont: { family: 'JetBrains Mono', size: 10 },
+          footerColor: '#FFD700',
           callbacks: {
             title: (items) => {
               const idx = items[0]?.dataIndex;
@@ -3821,6 +3863,14 @@ function renderPower(logData) {
               const r = powerSampled[idx];
               const matchLabel = getMatchRelativeLabel(r.time_s);
               return `${r.time_s.toFixed(1)}s${matchLabel ? ` • Match ${matchLabel}` : ''} — ${r.mode.toUpperCase()} — Total: ${(r.totalCurrent||0).toFixed(1)}A`;
+            },
+            footer: (items) => {
+              if (!parsedEvents || !items.length) return '';
+              const idx = items[0]?.dataIndex;
+              if (idx === undefined) return '';
+              const t = powerSampled[idx]?.time_s;
+              if (t === undefined) return '';
+              return getNearbyEventTooltipLines(parsedEvents.events, t);
             }
           }
         },
