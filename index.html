@@ -1203,6 +1203,21 @@ function summarizeMatchMetrics(records, eventData) {
   };
 }
 
+function formatMatchClock(seconds) {
+  if (seconds === undefined || seconds === null || !isFinite(seconds)) return '';
+  const sign = seconds < 0 ? '-' : '';
+  const totalSeconds = Math.max(0, Math.round(Math.abs(seconds)));
+  const minutes = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  return `${sign}${minutes}:${String(secs).padStart(2, '0')}`;
+}
+
+function getMatchRelativeLabel(time_s, bounds = window._matchBounds) {
+  if (!bounds || !bounds.hasMatchData || bounds.enabledStart == null || bounds.enabledEnd == null) return '';
+  if (time_s < bounds.enabledStart || time_s > bounds.enabledEnd) return '';
+  return formatMatchClock(time_s - bounds.enabledStart);
+}
+
 // ==================== DSLOG PARSER ====================
 function parseDSLog(buffer) {
   const view = new DataView(buffer);
@@ -2512,7 +2527,17 @@ function renderTimeline(logData, eventData) {
   const hasMatchData = firstEnabled !== undefined;
 
   // Store boundaries globally for power chart reuse
-  window._matchBounds = { matchStart, matchEnd, autoStart, autoEnd, teleopStart, teleopEnd, hasMatchData };
+  window._matchBounds = {
+    matchStart,
+    matchEnd,
+    autoStart,
+    autoEnd,
+    teleopStart,
+    teleopEnd,
+    enabledStart: firstEnabled ? firstEnabled.time_s : null,
+    enabledEnd: lastEnabled ? lastEnabled.time_s : null,
+    hasMatchData
+  };
 
   // Controls: series toggles + zoom presets
   const controlsSeries = ['Voltage', 'Packet Loss', 'CAN Usage', 'roboRIO CPU', 'Trip Time'];
@@ -2561,9 +2586,17 @@ function renderTimeline(logData, eventData) {
     if (start !== undefined && end !== undefined) {
       chartInstance.options.scales.x.min = start;
       chartInstance.options.scales.x.max = end;
+      if (chartInstance.options.scales.xMatch) {
+        chartInstance.options.scales.xMatch.min = start;
+        chartInstance.options.scales.xMatch.max = end;
+      }
     } else {
       delete chartInstance.options.scales.x.min;
       delete chartInstance.options.scales.x.max;
+      if (chartInstance.options.scales.xMatch) {
+        delete chartInstance.options.scales.xMatch.min;
+        delete chartInstance.options.scales.xMatch.max;
+      }
     }
     chartInstance.update();
     // Sync mode chart
@@ -2666,8 +2699,26 @@ function renderTimeline(logData, eventData) {
       x: {
         type: 'linear',
         display: true,
+        position: 'bottom',
+        stack: 'time',
+        stackWeight: 1,
         title: { display: true, text: 'Time (s)', font: { family: 'JetBrains Mono', size: 11 } },
         ticks: { font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 20 }
+      },
+      xMatch: {
+        type: 'linear',
+        position: 'bottom',
+        display: hasMatchData,
+        stack: 'time',
+        stackWeight: 1,
+        grid: { drawOnChartArea: false, drawTicks: true },
+        border: { color: 'rgba(0,0,0,0.12)' },
+        title: { display: hasMatchData, text: 'Match Time (Auto Start = 0:00)', font: { family: 'JetBrains Mono', size: 11 } },
+        ticks: {
+          font: { family: 'JetBrains Mono', size: 10 },
+          maxTicksLimit: 20,
+          callback: (value) => getMatchRelativeLabel(value)
+        }
       }
     };
 
@@ -2675,6 +2726,8 @@ function renderTimeline(logData, eventData) {
     if (hasMatchData) {
       scales.x.min = matchStart;
       scales.x.max = matchEnd;
+      scales.xMatch.min = matchStart;
+      scales.xMatch.max = matchEnd;
     }
     
     if (hasVoltage) {
@@ -2715,8 +2768,14 @@ function renderTimeline(logData, eventData) {
       chartInstance.data.datasets = datasets;
       chartInstance.options.scales = scales;
       // Restore zoom (overrides buildChart's default auto-crop)
-      if (curMin !== undefined) chartInstance.options.scales.x.min = curMin;
-      if (curMax !== undefined) chartInstance.options.scales.x.max = curMax;
+      if (curMin !== undefined) {
+        chartInstance.options.scales.x.min = curMin;
+        if (chartInstance.options.scales.xMatch) chartInstance.options.scales.xMatch.min = curMin;
+      }
+      if (curMax !== undefined) {
+        chartInstance.options.scales.x.max = curMax;
+        if (chartInstance.options.scales.xMatch) chartInstance.options.scales.xMatch.max = curMax;
+      }
       chartInstance.update();
     }
   }
@@ -2767,7 +2826,8 @@ function renderTimeline(logData, eventData) {
             title: (items) => {
               const idx = items[0].dataIndex;
               const r = sampled[idx];
-              return `${r.time_s.toFixed(1)}s — ${r.mode.toUpperCase()}`;
+              const matchLabel = getMatchRelativeLabel(r.time_s);
+              return `${r.time_s.toFixed(1)}s${matchLabel ? ` • Match ${matchLabel}` : ''} — ${r.mode.toUpperCase()}`;
             },
             footer: (items) => {
               if (!parsedEvents || !items.length) return '';
@@ -3254,6 +3314,10 @@ function seekTimeline(time_s) {
     // Zoom to ±5s window around the event
     chartInstance.options.scales.x.min = Math.max(0, time_s - 5);
     chartInstance.options.scales.x.max = time_s + 5;
+    if (chartInstance.options.scales.xMatch) {
+      chartInstance.options.scales.xMatch.min = Math.max(0, time_s - 5);
+      chartInstance.options.scales.xMatch.max = time_s + 5;
+    }
     chartInstance.update();
 
     // Find closest data point for tooltip
@@ -3300,9 +3364,17 @@ function seekTimeline(time_s) {
         if (bounds && bounds.hasMatchData) {
           chartInstance.options.scales.x.min = bounds.matchStart;
           chartInstance.options.scales.x.max = bounds.matchEnd;
+          if (chartInstance.options.scales.xMatch) {
+            chartInstance.options.scales.xMatch.min = bounds.matchStart;
+            chartInstance.options.scales.xMatch.max = bounds.matchEnd;
+          }
         } else {
           delete chartInstance.options.scales.x.min;
           delete chartInstance.options.scales.x.max;
+          if (chartInstance.options.scales.xMatch) {
+            delete chartInstance.options.scales.xMatch.min;
+            delete chartInstance.options.scales.xMatch.max;
+          }
         }
         chartInstance.update();
         // Sync mode chart
@@ -3494,7 +3566,17 @@ function renderPower(logData) {
 
   // Also store globally for timeline if it hasn't computed yet
   if (!window._matchBounds || !window._matchBounds.hasMatchData) {
-    window._matchBounds = { matchStart: pMatchStart, matchEnd: pMatchEnd, autoStart: pAutoStart, autoEnd: pAutoEnd, teleopStart: pTeleopStart, teleopEnd: pTeleopEnd, hasMatchData: pHasMatch };
+    window._matchBounds = {
+      matchStart: pMatchStart,
+      matchEnd: pMatchEnd,
+      autoStart: pAutoStart,
+      autoEnd: pAutoEnd,
+      teleopStart: pTeleopStart,
+      teleopEnd: pTeleopEnd,
+      enabledStart: pFirstEnabled ? pFirstEnabled.time_s : null,
+      enabledEnd: pLastEnabled ? pLastEnabled.time_s : null,
+      hasMatchData: pHasMatch
+    };
   }
 
   const pwrZoomPresets = [];
@@ -3534,9 +3616,17 @@ function renderPower(logData) {
       if (start !== undefined && end !== undefined) {
         powerChartInstance.options.scales.x.min = start;
         powerChartInstance.options.scales.x.max = end;
+        if (powerChartInstance.options.scales.xMatch) {
+          powerChartInstance.options.scales.xMatch.min = start;
+          powerChartInstance.options.scales.xMatch.max = end;
+        }
       } else {
         delete powerChartInstance.options.scales.x.min;
         delete powerChartInstance.options.scales.x.max;
+        if (powerChartInstance.options.scales.xMatch) {
+          delete powerChartInstance.options.scales.xMatch.min;
+          delete powerChartInstance.options.scales.xMatch.max;
+        }
       }
       powerChartInstance.update();
       // Sync mode bar
@@ -3660,8 +3750,14 @@ function renderPower(logData) {
       const curMin = powerChartInstance.options.scales.x.min;
       const curMax = powerChartInstance.options.scales.x.max;
       powerChartInstance.data.datasets = datasets;
-      if (curMin !== undefined) powerChartInstance.options.scales.x.min = curMin;
-      if (curMax !== undefined) powerChartInstance.options.scales.x.max = curMax;
+      if (curMin !== undefined) {
+        powerChartInstance.options.scales.x.min = curMin;
+        if (powerChartInstance.options.scales.xMatch) powerChartInstance.options.scales.xMatch.min = curMin;
+      }
+      if (curMax !== undefined) {
+        powerChartInstance.options.scales.x.max = curMax;
+        if (powerChartInstance.options.scales.xMatch) powerChartInstance.options.scales.xMatch.max = curMax;
+      }
       powerChartInstance.update();
     }
   }
@@ -3748,7 +3844,8 @@ function renderPower(logData) {
               const idx = items[0]?.dataIndex;
               if (idx === undefined) return '';
               const r = powerSampled[idx];
-              return `${r.time_s.toFixed(1)}s — ${r.mode.toUpperCase()} — Total: ${(r.totalCurrent||0).toFixed(1)}A`;
+              const matchLabel = getMatchRelativeLabel(r.time_s);
+              return `${r.time_s.toFixed(1)}s${matchLabel ? ` • Match ${matchLabel}` : ''} — ${r.mode.toUpperCase()} — Total: ${(r.totalCurrent||0).toFixed(1)}A`;
             }
           }
         }
@@ -3756,8 +3853,28 @@ function renderPower(logData) {
       scales: {
         x: {
           type: 'linear',
+          position: 'bottom',
+          stack: 'time',
+          stackWeight: 1,
           title: { display: true, text: 'Time (s)', font: { family: 'JetBrains Mono', size: 11 } },
           ticks: { font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 20 },
+          min: pHasMatch ? pMatchStart : undefined,
+          max: pHasMatch ? pMatchEnd : undefined
+        },
+        xMatch: {
+          type: 'linear',
+          position: 'bottom',
+          display: pHasMatch,
+          stack: 'time',
+          stackWeight: 1,
+          grid: { drawOnChartArea: false, drawTicks: true },
+          border: { color: 'rgba(0,0,0,0.12)' },
+          title: { display: pHasMatch, text: 'Match Time (Auto Start = 0:00)', font: { family: 'JetBrains Mono', size: 11 } },
+          ticks: {
+            font: { family: 'JetBrains Mono', size: 10 },
+            maxTicksLimit: 20,
+            callback: (value) => getMatchRelativeLabel(value)
+          },
           min: pHasMatch ? pMatchStart : undefined,
           max: pHasMatch ? pMatchEnd : undefined
         },
@@ -4012,6 +4129,10 @@ function seekPowerChart(time_s) {
 
     powerChartInstance.options.scales.x.min = Math.max(0, time_s - 5);
     powerChartInstance.options.scales.x.max = time_s + 5;
+    if (powerChartInstance.options.scales.xMatch) {
+      powerChartInstance.options.scales.xMatch.min = Math.max(0, time_s - 5);
+      powerChartInstance.options.scales.xMatch.max = time_s + 5;
+    }
     powerChartInstance.update();
 
     // Add reset zoom button
@@ -4027,9 +4148,17 @@ function seekPowerChart(time_s) {
         if (bounds && bounds.hasMatchData) {
           powerChartInstance.options.scales.x.min = bounds.matchStart;
           powerChartInstance.options.scales.x.max = bounds.matchEnd;
+          if (powerChartInstance.options.scales.xMatch) {
+            powerChartInstance.options.scales.xMatch.min = bounds.matchStart;
+            powerChartInstance.options.scales.xMatch.max = bounds.matchEnd;
+          }
         } else {
           delete powerChartInstance.options.scales.x.min;
           delete powerChartInstance.options.scales.x.max;
+          if (powerChartInstance.options.scales.xMatch) {
+            delete powerChartInstance.options.scales.xMatch.min;
+            delete powerChartInstance.options.scales.xMatch.max;
+          }
         }
         powerChartInstance.update();
         btn.remove();
