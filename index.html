@@ -1364,10 +1364,18 @@ function finalizeDiagnostics(diagnostics) {
 
   if (hasFixTitle('📡 Radio Reboot Detected')) {
     clone.fixNow = clone.fixNow.filter(d => d.title !== '📡 Severe Communications Instability');
+    clone.investigate = clone.investigate.filter(d => d.title !== '🔁 Robot Code Restarted During Match');
   }
 
   if (hasFixTitle('🚨 CAN Bus Timeouts')) {
     clone.investigate = clone.investigate.filter(d => d.title !== '📊 High CAN Bus Utilization');
+  }
+
+  if (hasFixTitle('❌ No Match Activity Detected')) {
+    clone.monitor = [];
+    clone.investigate = clone.investigate.filter(d =>
+      !['⏱️ Slow Robot Connection', '📶 Network Instability While Stationary'].includes(d.title)
+    );
   }
 
   ['fixNow', 'investigate', 'monitor'].forEach(bucket => {
