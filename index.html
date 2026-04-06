@@ -3897,6 +3897,7 @@ function renderPower(logData) {
 
   function updatePowerChart() {
     const datasets = buildPowerDatasets();
+    anomalyPeaks = getPowerAnomalyPeaks(datasets);
     renderPowerSeriesLegend();
     if (powerChartInstance) {
       // Preserve zoom
@@ -3909,10 +3910,9 @@ function renderPower(logData) {
     }
   }
 
-  // Persistent peak annotation plugin — uses downsampled data (peak-preserving)
-  const anomalyPeaks = [];
-  if (motorAnomalies.length > 0) {
-    const datasets = buildPowerDatasets();
+  function getPowerAnomalyPeaks(datasets) {
+    const peaks = [];
+    if (motorAnomalies.length === 0) return peaks;
     motorAnomalies.forEach(a => {
       const dsIdx = datasets.findIndex(ds => ds.label === pdhName(a.ch));
       if (dsIdx < 0) return;
@@ -3921,10 +3921,14 @@ function renderPower(logData) {
         if (pt && pt.y > peakVal) { peakVal = pt.y; peakIdx = i; }
       });
       if (peakIdx >= 0) {
-        anomalyPeaks.push({ dsIdx, peakIdx, peakVal, time: datasets[dsIdx].data[peakIdx]?.x, name: pdhName(a.ch), color: powerSeriesColor(a.ch), severity: a.severity });
+        peaks.push({ dsIdx, peakIdx, peakVal, time: datasets[dsIdx].data[peakIdx]?.x, name: pdhName(a.ch), color: powerSeriesColor(a.ch), severity: a.severity });
       }
     });
+    return peaks;
   }
+
+  // Persistent peak annotation plugin — uses downsampled data (peak-preserving)
+  let anomalyPeaks = getPowerAnomalyPeaks(buildPowerDatasets());
 
   const powerPeakAnnotationPlugin = {
     id: 'powerPeakAnnotations',
@@ -3972,11 +3976,13 @@ function renderPower(logData) {
     }
   };
 
+  const initialPowerDatasets = buildPowerDatasets();
+  anomalyPeaks = getPowerAnomalyPeaks(initialPowerDatasets);
   if (powerChartInstance) powerChartInstance.destroy();
   renderPowerSeriesLegend();
   powerChartInstance = new Chart(document.getElementById('powerChart'), {
     type: 'line',
-    data: { datasets: buildPowerDatasets() },
+    data: { datasets: initialPowerDatasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
