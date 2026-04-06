@@ -5,10 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PyroTech Match Diagnostics</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔥</text></svg>">
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="./vendor/chart.umd.min.js"></script>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap');
-
 :root {
   --bg: #FAFAF8;
   --surface: #FFFFFF;
@@ -925,7 +923,7 @@ body {
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
         <div style="font-size:13px;font-weight:600;color:var(--text-secondary);">GitHub Log Browser</div>
         <div id="githubRepoLabel" style="font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;"></div>
-        <button type="button" style="margin-left:auto;padding:5px 10px;border:1px solid var(--border);background:var(--surface);border-radius:6px;font-size:11px;cursor:pointer;font-family:'Outfit',sans-serif;" onclick="loadGithubFolders()">↻ Refresh</button>
+        <button id="githubRefreshBtn" type="button" style="margin-left:auto;padding:5px 10px;border:1px solid var(--border);background:var(--surface);border-radius:6px;font-size:11px;cursor:pointer;font-family:'Outfit',sans-serif;" onclick="loadGithubFolders()">↻ Refresh</button>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
         <div>
@@ -4315,22 +4313,103 @@ let loadedFiles = {};
 let APPS_SCRIPT_URL = null;
 let SHEET_ID = null;
 let GITHUB_CONFIG = null;
+let appCapabilities = {
+  configAvailable: false,
+  githubAvailable: false,
+  historyAvailable: false,
+  saveAvailable: false
+};
 let currentMatchMeta = {};
 let githubFolders = [];
 let githubMatches = [];
 let githubSelectedMatch = null;
 let pendingLogBuffers = null;
 
-// Fetch config on page load
-fetch('/api/config').then(r => r.json()).then(cfg => {
-  APPS_SCRIPT_URL = cfg.appsScriptUrl;
-  SHEET_ID = cfg.sheetId;
-  GITHUB_CONFIG = cfg.github || null;
-  if (GITHUB_CONFIG) {
-    const label = document.getElementById('githubRepoLabel');
-    if (label) label.textContent = `${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo} · ${GITHUB_CONFIG.branch}:${GITHUB_CONFIG.basePath}`;
+function setButtonAvailability(button, enabled, disabledLabel = '') {
+  if (!button) return;
+  button.disabled = !enabled;
+  button.style.opacity = enabled ? '1' : '0.55';
+  button.style.cursor = enabled ? 'pointer' : 'not-allowed';
+  if (disabledLabel) button.title = enabled ? '' : disabledLabel;
+}
+
+function renderHistoryUnavailable(message) {
+  const container = document.getElementById('matchHistoryContent');
+  const trendContainer = document.getElementById('batteryTrendContainer');
+  if (container) {
+    container.innerHTML = `<div class="history-loading">${escapeHtml(message)}<br><span style="font-size:12px;color:var(--text-muted);">Local log analysis is still fully available.</span></div>`;
   }
-}).catch(() => { /* offline or no config — still works for local analysis */ });
+  if (trendContainer) trendContainer.style.display = 'none';
+}
+
+function renderGithubUnavailable(message) {
+  const folderSelect = document.getElementById('githubFolderSelect');
+  const matchSelect = document.getElementById('githubMatchSelect');
+  const repoLabel = document.getElementById('githubRepoLabel');
+  githubFolders = [];
+  githubMatches = [];
+  githubSelectedMatch = null;
+  if (folderSelect) folderSelect.innerHTML = '<option value="">Offline</option>';
+  if (matchSelect) matchSelect.innerHTML = '<option value="">GitHub unavailable offline</option>';
+  if (repoLabel && !GITHUB_CONFIG) repoLabel.textContent = 'Offline local analysis mode';
+  updateGithubMatchMeta();
+  setGithubStatus(message, 'muted');
+}
+
+function applyConnectivityState() {
+  const githubBtn = document.getElementById('githubBrowseBtn');
+  const githubRefreshBtn = document.getElementById('githubRefreshBtn');
+  const historyTabBtn = document.querySelector('.tab-btn[data-tab="history"]');
+  const githubOfflineMessage = 'GitHub log browsing is unavailable offline.';
+  const historyOfflineMessage = 'Cloud match history is unavailable offline.';
+
+  setButtonAvailability(githubBtn, appCapabilities.githubAvailable, githubOfflineMessage);
+  setButtonAvailability(githubRefreshBtn, appCapabilities.githubAvailable, githubOfflineMessage);
+
+  if (!appCapabilities.githubAvailable) {
+    renderGithubUnavailable('GitHub log browsing unavailable offline.');
+  } else if (GITHUB_CONFIG) {
+    const repoLabel = document.getElementById('githubRepoLabel');
+    if (repoLabel) repoLabel.textContent = `${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo} · ${GITHUB_CONFIG.branch}:${GITHUB_CONFIG.basePath}`;
+  }
+
+  if (historyTabBtn) {
+    historyTabBtn.style.opacity = appCapabilities.historyAvailable ? '1' : '0.72';
+    historyTabBtn.title = appCapabilities.historyAvailable ? '' : historyOfflineMessage;
+  }
+
+  if (!appCapabilities.historyAvailable) {
+    renderHistoryUnavailable('Cloud match history unavailable offline.');
+  }
+}
+
+// Fetch config on page load
+fetch('/api/config').then(r => {
+  if (!r.ok) throw new Error('Config unavailable');
+  return r.json();
+}).then(cfg => {
+  APPS_SCRIPT_URL = cfg.appsScriptUrl || null;
+  SHEET_ID = cfg.sheetId || null;
+  GITHUB_CONFIG = cfg.github || null;
+  appCapabilities = {
+    configAvailable: true,
+    githubAvailable: !!GITHUB_CONFIG,
+    historyAvailable: !!APPS_SCRIPT_URL,
+    saveAvailable: !!APPS_SCRIPT_URL
+  };
+  applyConnectivityState();
+}).catch(() => {
+  APPS_SCRIPT_URL = null;
+  SHEET_ID = null;
+  GITHUB_CONFIG = null;
+  appCapabilities = {
+    configAvailable: false,
+    githubAvailable: false,
+    historyAvailable: false,
+    saveAvailable: false
+  };
+  applyConnectivityState();
+});
 
 function getGithubEventName() {
   if (!githubSelectedMatch || !githubSelectedMatch.folder) return '';
@@ -4367,6 +4446,10 @@ async function loadGithubFolders() {
   const folderSelect = document.getElementById('githubFolderSelect');
   const matchSelect = document.getElementById('githubMatchSelect');
   if (!folderSelect || !matchSelect) return;
+  if (!appCapabilities.githubAvailable) {
+    renderGithubUnavailable('GitHub log browsing unavailable offline.');
+    return;
+  }
   setGithubStatus('Loading GitHub folders...', 'info');
   folderSelect.innerHTML = '<option value="">Loading...</option>';
   matchSelect.innerHTML = '<option value="">Choose a folder first</option>';
@@ -4382,13 +4465,17 @@ async function loadGithubFolders() {
     setGithubStatus(githubFolders.length ? `Loaded ${githubFolders.length} folder${githubFolders.length === 1 ? '' : 's'} from GitHub.` : 'No paired log folders found.', githubFolders.length ? 'success' : 'muted');
   } catch (error) {
     folderSelect.innerHTML = '<option value="">Failed to load folders</option>';
-    setGithubStatus(error.message, 'error');
+    setGithubStatus('GitHub log browsing is temporarily unavailable.', 'error');
   }
 }
 
 async function loadGithubMatchesForFolder(folder) {
   const matchSelect = document.getElementById('githubMatchSelect');
   if (!matchSelect) return;
+  if (!appCapabilities.githubAvailable) {
+    renderGithubUnavailable('GitHub log browsing unavailable offline.');
+    return;
+  }
   githubMatches = [];
   githubSelectedMatch = null;
   updateGithubMatchMeta();
@@ -4409,7 +4496,7 @@ async function loadGithubMatchesForFolder(folder) {
     setGithubStatus(githubMatches.length ? `Loaded ${githubMatches.length} paired match log${githubMatches.length === 1 ? '' : 's'}.` : 'No complete .dslog/.dsevents pairs found in that folder.', githubMatches.length ? 'success' : 'muted');
   } catch (error) {
     matchSelect.innerHTML = '<option value="">Failed to load matches</option>';
-    setGithubStatus(error.message, 'error');
+    setGithubStatus('GitHub match listing is temporarily unavailable.', 'error');
   }
 }
 
@@ -4417,6 +4504,11 @@ function toggleGithubBrowser(event) {
   if (event) event.stopPropagation();
   const panel = document.getElementById('githubBrowser');
   if (!panel) return;
+  if (!appCapabilities.githubAvailable) {
+    panel.style.display = 'block';
+    renderGithubUnavailable('GitHub log browsing unavailable offline.');
+    return;
+  }
   const opening = panel.style.display === 'none' || !panel.style.display;
   panel.style.display = opening ? 'block' : 'none';
   if (opening && githubFolders.length === 0) loadGithubFolders();
@@ -4448,6 +4540,10 @@ async function analyzeLogBuffers(logBuf, evBuf, meta = {}, fileMeta = {}) {
 
 async function loadGithubMatch() {
   if (!githubSelectedMatch) return;
+  if (!appCapabilities.githubAvailable) {
+    renderGithubUnavailable('GitHub log browsing unavailable offline.');
+    return;
+  }
   setGithubStatus('Downloading GitHub log pair...', 'info');
   document.querySelector('.drop-zone h2').textContent = 'Loading GitHub logs...';
   try {
@@ -4547,7 +4643,7 @@ function triggerParse() {
 }
 
 function saveMatchToSheet(summary) {
-  if (!APPS_SCRIPT_URL) return; // No backend configured
+  if (!appCapabilities.saveAvailable || !APPS_SCRIPT_URL) return; // Offline/local-only mode
   const status = document.getElementById('saveStatus');
   status.style.display = 'inline-block';
   status.className = 'save-status saving';
@@ -4570,12 +4666,12 @@ function saveMatchToSheet(summary) {
 }
 
 function loadMatchHistory() {
-  const container = document.getElementById('matchHistoryContent');
-  if (!APPS_SCRIPT_URL) {
-    container.innerHTML = '<div class="history-loading">Match history requires the Google Sheets backend.<br><span style="font-size:12px;color:var(--text-muted);">Set APPS_SCRIPT_URL in Vercel environment variables.</span></div>';
+  if (!appCapabilities.historyAvailable || !APPS_SCRIPT_URL) {
+    renderHistoryUnavailable('Cloud match history unavailable offline.');
     return;
   }
 
+  const container = document.getElementById('matchHistoryContent');
   container.innerHTML = '<div class="history-loading">Loading match history...</div>';
 
   fetch(APPS_SCRIPT_URL)
@@ -4715,8 +4811,10 @@ function loadMatchHistory() {
       // ---- Battery Trending Chart ----
       renderBatteryTrend(allMatches);
     })
-    .catch(err => {
-      container.innerHTML = '<div class="history-loading">Failed to load match history.<br><span style="font-size:12px;color:var(--text-muted);">' + escapeHtml(err.message) + '</span></div>';
+    .catch(() => {
+      container.innerHTML = '<div class="history-loading">Cloud match history is temporarily unavailable.<br><span style="font-size:12px;color:var(--text-muted);">Local log analysis is still fully available.</span></div>';
+      const trendContainer = document.getElementById('batteryTrendContainer');
+      if (trendContainer) trendContainer.style.display = 'none';
     });
 }
 
