@@ -1276,6 +1276,7 @@ function extractCanIdsFromText(text) {
         if (Number.isFinite(id) && id >= 0 && id <= 63) ids.add(id);
       });
     });
+    if (ids.size > 1 && ids.has(0)) ids.delete(0);
     return [...ids].sort((a, b) => a - b);
   }
   const patterns = [
@@ -1292,6 +1293,7 @@ function extractCanIdsFromText(text) {
       if (Number.isFinite(id) && id >= 0 && id <= 63) ids.add(id);
     }
   });
+  if (ids.size > 1 && ids.has(0)) ids.delete(0);
   return [...ids].sort((a, b) => a - b);
 }
 
@@ -1311,20 +1313,17 @@ function collectCanIdsFromEvents(events) {
 }
 
 function extractCanMismatchInfo(text) {
-  const lower = (text || '').toLowerCase();
-  const explicitMismatch = (
-    lower.includes('not a spark max') ||
-    lower.includes('not a spark flex') ||
-    lower.includes('not a talon fx') ||
-    lower.includes('not a talon srx') ||
-    lower.includes('functionalities may not work')
-  );
-  if (!explicitMismatch) return null;
-  const ids = extractCanIdsFromText(text || '');
+  const mismatchRegex = /(not a spark max|not a spark flex|not a talon fx|not a talon srx|functionalities may not work)/i;
+  const match = (text || '').match(mismatchRegex);
+  if (!match || match.index === undefined) return null;
+  const snippetStart = Math.max(0, match.index - 80);
+  const snippetEnd = Math.min((text || '').length, match.index + match[0].length + 160);
+  const snippet = (text || '').slice(snippetStart, snippetEnd).replace(/\s+/g, ' ').trim();
+  const ids = extractCanIdsFromText(snippet);
   const canId = ids.length > 0 ? ids[0] : null;
   const mapped = canId !== null ? PDH_BY_CAN_ID[canId] : null;
   const mechName = mapped && mapped.length > 0 ? mapped[0].name : null;
-  return { canId, mechName };
+  return { canId, mechName, snippet };
 }
 
 function inferDiagnosticPriority(item, bucket) {
@@ -1896,8 +1895,7 @@ function runDiagnostics(logData, eventData) {
 
   // ---- RULE 3: CAN device mismatch ----
   if (canMismatches.length > 0) {
-    const detail = canMismatches[0].event.text;
-    const { canId, mechName } = canMismatches[0].info;
+    const { canId, mechName, snippet } = canMismatches[0].info;
     const mechLabel = canId !== null
       ? (mechName ? `${mechName} (CAN ID ${canId})` : `CAN ID ${canId}`)
       : 'Unknown CAN Device';
@@ -1906,7 +1904,7 @@ function runDiagnostics(logData, eventData) {
       body: canId !== null
         ? `Code expects one CAN device type on CAN ID ${canId}${mechName ? ' (' + mechName + ')' : ''}, but a different device is there. This means motor control for that mechanism may be unreliable or non-functional.`
         : 'Code expects one CAN device type, but a different device responded. This means motor control for that mechanism may be unreliable or non-functional.',
-      evidence: `"${detail.substring(0, 160)}..."`,
+      evidence: `"${(snippet || '').substring(0, 160)}..."`,
       action: canId !== null
         ? `Verify CAN ID ${canId}${mechName ? ' (' + mechName + ')' : ''} — is it the expected device type? Update the code constructor to match the actual hardware, or fix the CAN ID assignment in the hardware client (REV, CTRE).`
         : 'Verify the reported CAN device type against what the code expects. Update the code constructor to match the actual hardware, or fix the CAN ID assignment in the hardware client.'
