@@ -1265,12 +1265,25 @@ function getNearbyEventTooltipLines(events, time_s, windowSeconds = 3, limit = 3
 function extractCanIdsFromText(text) {
   if (!text) return [];
   const ids = new Set();
+  const explicitIdListMatches = [
+    ...text.matchAll(/\bIDs?\s*:\s*([0-9,\s]+)/ig),
+    ...text.matchAll(/\bCAN IDs?\s*:\s*([0-9,\s]+)/ig)
+  ];
+  if (explicitIdListMatches.length > 0) {
+    explicitIdListMatches.forEach(match => {
+      match[1].split(',').forEach(part => {
+        const id = Number(part.trim());
+        if (Number.isFinite(id) && id >= 0 && id <= 63) ids.add(id);
+      });
+    });
+    return [...ids].sort((a, b) => a - b);
+  }
   const patterns = [
-    /CAN ID\s*(\d{1,3})/ig,
-    /\bCAN\s*(\d{1,3})\b/ig,
-    /\bdevice\s*(\d{1,3})\b/ig,
+    /\bCAN ID\s*(\d{1,3})\b/ig,
+    /\bCAN IDs?\s*(\d{1,3})\b/ig,
+    /\bIDs?\s*(\d{1,3})\b/ig,
     /\bmessage\s*(\d{1,3})\s*not found\b/ig,
-    /\bperiod status\s*(\d{1,3})\b/ig
+    /\bdevice id\s*(\d{1,3})\b/ig
   ];
   patterns.forEach(regex => {
     let match;
@@ -1295,6 +1308,23 @@ function collectCanIdsFromEvents(events) {
   const ids = new Set();
   (events || []).forEach(e => extractCanIdsFromText(e.text || '').forEach(id => ids.add(id)));
   return [...ids].sort((a, b) => a - b);
+}
+
+function extractCanMismatchInfo(text) {
+  const lower = (text || '').toLowerCase();
+  const explicitMismatch = (
+    lower.includes('not a spark max') ||
+    lower.includes('not a spark flex') ||
+    lower.includes('not a talon fx') ||
+    lower.includes('not a talon srx') ||
+    lower.includes('functionalities may not work')
+  );
+  if (!explicitMismatch) return null;
+  const ids = extractCanIdsFromText(text || '');
+  const canId = ids.length > 0 ? ids[0] : null;
+  const mapped = canId !== null ? PDH_BY_CAN_ID[canId] : null;
+  const mechName = mapped && mapped.length > 0 ? mapped[0].name : null;
+  return { canId, mechName };
 }
 
 function inferDiagnosticPriority(item, bucket) {
@@ -1812,7 +1842,9 @@ function runDiagnostics(logData, eventData) {
 
   // Extract specific events
   const canTimeouts = events.filter(e => e.category === 'CAN' && e.title.includes('Timeout'));
-  const canMismatches = events.filter(e => e.title.includes('Mismatch') || e.text.toLowerCase().includes('not a spark max'));
+  const canMismatches = events
+    .map(e => ({ event: e, info: extractCanMismatchInfo(e.text) }))
+    .filter(entry => entry.info);
   const commsLost = events.filter(e => e.title.includes('Communication Lost'));
   const firmwareWarnings = events.filter(e => e.title.includes('Firmware'));
   const diskWarnings = events.filter(e => e.title.includes('Disk'));
@@ -1864,17 +1896,20 @@ function runDiagnostics(logData, eventData) {
 
   // ---- RULE 3: CAN device mismatch ----
   if (canMismatches.length > 0) {
-    const detail = canMismatches[0].text;
-    const canIdMatch = detail.match(/CAN ID (\d+)/);
-    const canId = canIdMatch ? canIdMatch[1] : '?';
-    const mechChannels = PDH_BY_CAN_ID[Number(canId)];
-    const mechName = mechChannels && mechChannels.length > 0 ? mechChannels[0].name : null;
-    const mechLabel = mechName ? `${mechName} (CAN ID ${canId})` : `CAN ID ${canId}`;
+    const detail = canMismatches[0].event.text;
+    const { canId, mechName } = canMismatches[0].info;
+    const mechLabel = canId !== null
+      ? (mechName ? `${mechName} (CAN ID ${canId})` : `CAN ID ${canId}`)
+      : 'Unknown CAN Device';
     diagnostics.fixNow.push({
       title: `🔧 CAN Device Mismatch — ${mechLabel}`,
-      body: `Code expects a SPARK MAX on CAN ID ${canId}${mechName ? ' (' + mechName + ')' : ''}, but a different device is there. This means motor control for that mechanism may be unreliable or non-functional.`,
-      evidence: `"${canMismatches[0].text.substring(0, 120)}..."`,
-      action: `Verify CAN ID ${canId}${mechName ? ' (' + mechName + ')' : ''} — is it a SPARK MAX, SPARK Flex, or something else? Update the code constructor to match the actual hardware, or fix the CAN ID assignment in the hardware client (REV, CTRE).`
+      body: canId !== null
+        ? `Code expects one CAN device type on CAN ID ${canId}${mechName ? ' (' + mechName + ')' : ''}, but a different device is there. This means motor control for that mechanism may be unreliable or non-functional.`
+        : 'Code expects one CAN device type, but a different device responded. This means motor control for that mechanism may be unreliable or non-functional.',
+      evidence: `"${detail.substring(0, 160)}..."`,
+      action: canId !== null
+        ? `Verify CAN ID ${canId}${mechName ? ' (' + mechName + ')' : ''} — is it the expected device type? Update the code constructor to match the actual hardware, or fix the CAN ID assignment in the hardware client (REV, CTRE).`
+        : 'Verify the reported CAN device type against what the code expects. Update the code constructor to match the actual hardware, or fix the CAN ID assignment in the hardware client.'
     });
   }
 
