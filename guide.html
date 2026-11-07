@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>User Guide - PyroTech Match Diagnostics</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔥</text></svg>">
+<style>
+:root {
+  --bg: #FAFAF8;
+  --surface: #FFFFFF;
+  --surface-alt: #F5F3EF;
+  --border: #E8E4DC;
+  --text: #1A1714;
+  --text-secondary: #6B6560;
+  --text-muted: #9B9590;
+  --maroon: #8B1A1A;
+  --maroon-bg: #FDF2F2;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-padding-top: 76px; }
+body {
+  font-family: 'Outfit', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+.header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 32px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.header h1 { font-size: 20px; font-weight: 700; color: var(--maroon); letter-spacing: -0.5px; }
+.header h1 span { color: var(--text-muted); font-weight: 400; font-size: 15px; margin-left: 6px; }
+.header-link {
+  margin-left: auto;
+  padding: 7px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.header-link:hover { border-color: var(--maroon); color: var(--maroon); }
+.guide { max-width: 860px; margin: 0 auto; padding: 24px 32px 64px; }
+.guide h2 { font-size: 24px; color: var(--maroon); margin: 40px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.guide h3 { font-size: 18px; margin: 28px 0 8px; }
+.guide p { margin: 10px 0; }
+.guide ul, .guide ol { margin: 10px 0; padding-left: 24px; }
+.guide li { margin: 4px 0; }
+.guide li ul { margin: 4px 0; }
+.guide a { color: var(--maroon); }
+.guide code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.88em;
+  background: var(--surface-alt);
+  padding: 1px 5px;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+.toc { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px 20px 12px; margin-top: 8px; }
+.toc h2 { margin-top: 12px; border: none; font-size: 18px; }
+.table-wrap { overflow-x: auto; margin: 14px 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.guide table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.guide th, .guide td { padding: 8px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); }
+.guide th { background: var(--surface-alt); font-weight: 600; }
+.guide tbody tr:last-child td { border-bottom: none; }
+@media (max-width: 768px) {
+  .header { padding: 12px 16px; }
+  .header h1 span { display: none; }
+  .guide { padding: 16px 16px 48px; }
+  .guide th, .guide td { min-width: 120px; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>PyroTech <span>Match Diagnostics User Guide</span></h1>
+  <a class="header-link" href="index.html">Open the App</a>
+</div>
+
+<main class="guide">
+<nav class="toc" aria-label="Contents">
+<h2 id="contents">Contents</h2>
+<ol><li><a href="#what-this-tool-does">What this tool does</a></li><li><a href="#quick-start">Quick start</a></li><li><a href="#loading-a-match">Loading a match</a></li><li><a href="#the-six-tabs">The six tabs</a><ul><li><a href="#match-summary">Match Summary</a></li><li><a href="#unified-timeline">Unified Timeline</a></li><li><a href="#power">Power</a></li><li><a href="#errors-warnings">Errors &amp; Warnings</a></li><li><a href="#insights">Insights</a></li><li><a href="#match-history">Match History</a></li></ul></li><li><a href="#where-to-look-for-what">Where to look for what</a></li><li><a href="#reading-the-results">Reading the results</a><ul><li><a href="#match-health-score">Match Health Score</a></li><li><a href="#warning-levels">Warning levels</a></li><li><a href="#insights-cards">Insights cards</a></li><li><a href="#motor-anomalies">Motor anomalies</a></li></ul></li><li><a href="#saving-and-match-history">Saving and Match History</a></li><li><a href="#using-it-without-wifi">Using it without WiFi</a></li><li><a href="#troubleshooting">Troubleshooting</a></li><li><a href="#terms">Terms</a></li></ol>
+</nav>
+<h2 id="what-this-tool-does">What this tool does</h2>
+<p>PyroTech Match Diagnostics turns robot Driver Station logs into a dashboard that shows what happened in a match and what to check next. Open it at <a href="https://pt-match-dx.vercel.app" target="_blank" rel="noopener">pt-match-dx.vercel.app</a>.</p>
+<p>It reads two files from each match: <code>.dslog</code> (telemetry such as battery, CAN and power) and <code>.dsevents</code> (messages and errors). You need both files from the same match. Versions 3 and 4 of the log format are supported.</p>
+<h2 id="quick-start">Quick start</h2>
+<p>You can go from log files to a to-do list for the pit in five steps.</p>
+<ol><li>Open the app and load a match, either by dropping in both log files or by using <strong>Browse Timber Logs on GitHub</strong>.</li><li>Enter the <strong>Battery ID</strong> and <strong>Event Name</strong>. Both are optional, but Match History is far more useful with them.</li><li>Click <strong>Analyze Match</strong>.</li><li>Read <strong>Match Summary</strong> for the health score and any red alerts.</li><li>Open <strong>Insights</strong> and work through <strong>Fix Before Next Match</strong> from the top.</li></ol>
+<h2 id="loading-a-match">Loading a match</h2>
+<p>Use your own files when you have them on the laptop, and GitHub when the logs are already in the team's Timber repo.</p>
+<p>The Driver Station laptop creates the log files, normally in <code>C:\Users\Public\Documents\FRC\Log Files</code>. The two files in a pair share the same date-and-time name.</p>
+<p><strong>From your computer</strong></p>
+<ol><li>Drag both the <code>.dslog</code> and <code>.dsevents</code> files onto the page, or click the drop zone to browse.</li><li>If you add only one, the app tells you which file is still missing. Make sure the pair comes from the same match.</li><li>When both show a green check, fill in the optional fields (your last Event Name is filled in for you) and click <strong>Analyze Match</strong>.</li></ol>
+<p><strong>From GitHub</strong></p>
+<ol><li>Click <strong>Browse Timber Logs on GitHub</strong>.</li><li>Pick a <strong>Folder</strong>. Folders can be months such as 03, or events such as States. The number in brackets is how many complete log pairs it holds.</li><li>Pick a <strong>Match Pair</strong>. Pairs are named by the date and time of the log, so use the match time to find yours.</li><li>Click <strong>Load &amp; Analyze GitHub Match</strong>. This only downloads the logs. The Event Name fills in from the folder name, so correct it if the folder is a month such as 03.</li><li>Add the Battery ID if you know it, then click <strong>Analyze Match</strong>.</li></ol>
+<p>To look at another match, click <strong>Load Different Logs</strong> at the top right.</p>
+<h2 id="the-six-tabs">The six tabs</h2>
+<p>The dashboard has six tabs. Start with Match Summary, and go to Insights when you want the to-do list.</p>
+<h3 id="match-summary">Match Summary</h3>
+<p>This is the one-page overview of the match, and it opens first.</p>
+<ul><li><strong>Match Health Score:</strong> a score out of 100 with a <strong>Score breakdown</strong> of what was deducted.</li><li><strong>Alerts:</strong> CAN problems and motor anomalies appear here if any were found.</li><li><strong>Match Mode Timeline:</strong> a colored bar showing time in Auto, Teleop, Disabled and Disconnected.</li><li><strong>Stat cards:</strong> ten headline numbers, including Min Voltage, Peak Packet Loss, Peak CAN Usage, Brownouts and Critical Errors. Auto should be about 15 s and teleop about 135 s.</li></ul>
+<h3 id="unified-timeline">Unified Timeline</h3>
+<p>This tab shows what happened second by second, so you can see when a problem started and what else changed at that moment.</p>
+<ul><li><strong>Main chart:</strong> Voltage and Packet Loss are on by default. You can also turn on CAN Usage, roboRIO CPU and Trip Time.</li><li><strong>Mode strip:</strong> a smaller chart below shows the robot's mode over the same period.</li><li><strong>Tooltips:</strong> hover over the chart to read values and see events logged close to that moment.</li></ul>
+<h3 id="power">Power</h3>
+<p>This tab shows where the electrical current went, channel by channel.</p>
+<ul><li><strong>Anomaly alerts:</strong> motors behaving unlike their partners, with <strong>Isolate on Chart</strong>.</li><li><strong>Top Current Consumers:</strong> the three channels with the highest peak current.</li><li><strong>Channel Visibility and chart:</strong> current over time for the channels you pick, grouped by mechanism such as Drivetrain, Intake and Shooter.</li><li><strong>Channel table:</strong> Peak, Avg and Energy for each channel, with its CAN ID, group and status. Flagged channels are highlighted.</li></ul>
+<h3 id="errors-warnings">Errors &amp; Warnings</h3>
+<p>This tab lists the messages the robot logged, cleaned up so repeats are grouped and routine noise is hidden. It shows what happened, so go to Insights for what to do about it.</p>
+<ul><li><strong>Banners:</strong> CAN and motor anomaly summaries sit at the top.</li><li><strong>Filters:</strong> show Critical, Warning or Info messages, and sort by severity or time.</li><li><strong>Message list:</strong> click a row for the full text, or <strong>Seek</strong> to see that moment on the timeline.</li></ul>
+<h3 id="insights">Insights</h3>
+<p>This tab turns everything above into a prioritized to-do list. Each card says what is wrong, what to do next and what evidence supports it. See <a href="#reading-the-results">Reading the results</a> for how the cards are grouped.</p>
+<h3 id="match-history">Match History</h3>
+<p>This tab compares matches over time, using every match saved to the team's sheet. It has a sortable table of saved matches and a battery trend chart below it. It needs an internet connection. See <a href="#saving-and-match-history">Saving and Match History</a> for details.</p>
+<h2 id="where-to-look-for-what">Where to look for what</h2>
+<p>Start from your question, then go to the tab listed here.</p>
+<div class="table-wrap"><table><thead><tr><th>I want to know</th><th>Tab</th><th>Look at</th></tr></thead><tbody><tr><td>How did the match go overall?</td><td>Match Summary</td><td>Match Health Score and the stat cards</td></tr><tr><td>Why did the score drop?</td><td>Match Summary</td><td><strong>Score breakdown</strong> under the health bar</td></tr><tr><td>What should we fix before the next match?</td><td>Insights</td><td><strong>Fix Before Next Match</strong> cards</td></tr><tr><td>How do I fix an error I found?</td><td>Insights</td><td>The matching card and its next step</td></tr><tr><td>How long were auto and teleop?</td><td>Match Summary</td><td>Match Mode Timeline and the duration cards</td></tr><tr><td>When did voltage or packet loss go bad?</td><td>Unified Timeline</td><td>Main chart, zoomed to <strong>Auto</strong> or <strong>Teleop</strong></td></tr><tr><td>Was CAN usage, CPU or trip time high?</td><td>Unified Timeline</td><td>Turn on <strong>CAN Usage</strong>, <strong>roboRIO CPU</strong> or <strong>Trip Time</strong></td></tr><tr><td>Which motors drew the most current?</td><td>Power</td><td><strong>Top Current Consumers</strong> and the channel table</td></tr><tr><td>Is one motor behaving unlike its partners?</td><td>Power</td><td>Anomaly alerts at the top, then <strong>Isolate on Chart</strong></td></tr><tr><td>What did a specific error say?</td><td>Errors &amp; Warnings</td><td>Click a row to expand the full message</td></tr><tr><td>Which CAN device dropped out?</td><td>Errors &amp; Warnings</td><td>CAN banner at the top</td></tr><tr><td>Is a battery getting worse?</td><td>Match History</td><td><strong>Battery Trending Across Matches</strong></td></tr><tr><td>How did we do across an event?</td><td>Match History</td><td>Table, filtered by event</td></tr></tbody></table></div>
+<h3 id="tab-controls-worth-knowing">Tab controls worth knowing</h3>
+<ul><li><strong>Show on Timeline</strong> and <strong>Seek</strong> jump to the Unified Timeline, zoomed to 5 seconds either side of that moment.</li><li><strong>Match Only</strong>, <strong>Auto</strong>, <strong>Teleop</strong> and <strong>Full Log</strong> set the chart range on Unified Timeline and Power. <strong>Fullscreen</strong> enlarges the chart.</li><li><strong>Channel Visibility</strong> on Power picks what is charted: <strong>All</strong>, <strong>None</strong>, <strong>Active Only</strong>, a mechanism group, or single channels.</li><li><strong>Show Noise</strong> on Errors &amp; Warnings reveals routine messages that are hidden by default.</li><li>Sort and filter chips on Errors &amp; Warnings switch between severity and time order. A label like ×12 means the same message repeated 12 times.</li><li>Charts show two times: seconds since the log started, and match time, where the start of auto is 0:00. Error rows use seconds since the log started.</li></ul>
+<h2 id="reading-the-results">Reading the results</h2>
+<p>The health score tells you how bad the match was, and Insights tells you what to do about it.</p>
+<h3 id="match-health-score">Match Health Score</h3>
+<p>Every match starts at 100 and loses points for each problem found. Open <strong>Score breakdown</strong> to see exactly what was deducted. A log with no auto or teleop data is forced to 5, which usually means the robot never connected to the field. Logs from pit or idle sessions score 5 the same way.</p>
+<div class="table-wrap"><table><thead><tr><th>Score</th><th>Label</th><th>Color</th></tr></thead><tbody><tr><td>75 to 100</td><td>Good Match</td><td>Green</td></tr><tr><td>50 to 74</td><td>Issues Detected</td><td>Yellow</td></tr><tr><td>0 to 49</td><td>Severe Match Health Issues</td><td>Red</td></tr></tbody></table></div>
+<h3 id="warning-levels">Warning levels</h3>
+<p>These are the main limits the app checks. Most values are measured during auto and teleop. Brownout and CAN counts cover the whole log.</p>
+<div class="table-wrap"><table><thead><tr><th>Measure</th><th>Warning sign</th><th>Serious sign</th></tr></thead><tbody><tr><td>Minimum voltage</td><td>Under 11 V</td><td>Under 10 V, critical under 8 V</td></tr><tr><td>Brownouts</td><td>Any brownout</td><td>More than 5 incidents</td></tr><tr><td>Peak packet loss</td><td>Over 5%</td><td>Over 20%</td></tr><tr><td>Peak CAN usage</td><td>Over 70%</td><td>None set</td></tr><tr><td>CAN timeouts</td><td>Any</td><td>More than 3</td></tr><tr><td>CAN stale data</td><td>Any</td><td>More than 10</td></tr><tr><td>roboRIO CPU</td><td>Peak over 95%</td><td>Average over 85%</td></tr><tr><td>Motor peak current</td><td>Over 2× its matching motors and over 30 A</td><td>Over 60 A: breaker trip risk</td></tr><tr><td>Total current</td><td>None set</td><td>Over 120 A for more than 2 seconds</td></tr><tr><td>Battery resistance</td><td>Over 25 mΩ across repeated heavy-load moments (healthy is under 15 mΩ)</td><td>None set</td></tr></tbody></table></div>
+<h3 id="insights-cards">Insights cards</h3>
+<p>Insights groups findings by urgency and puts the most serious first. Each card explains the problem, gives a next step after the arrow, and shows the evidence at the bottom.</p>
+<ul><li><strong>Fix Before Next Match</strong> (red): act now, for example radio reboots, code exceptions or CAN timeouts.</li><li><strong>Investigate When Possible</strong> (yellow): look into it when there is time, for example voltage sag or firmware warnings.</li><li><strong>Systems Healthy</strong> (green): checks that passed.</li></ul>
+<p>The app also removes duplicate symptoms. A radio reboot card replaces the separate comms instability card, for example, so you see the cause and not every side effect.</p>
+<h3 id="motor-anomalies">Motor anomalies</h3>
+<p>The app compares motors that do the same job, such as the four swerve drive motors, and flags any that look different. A motor drawing far more than its partners can point to binding or a mechanical fault. One drawing far less can point to a bad connection or a motor that is not doing its share.</p>
+<p>These alerts appear on Match Summary, Power and Errors &amp; Warnings. <strong>Isolate on Chart</strong> opens that motor on the Power chart.</p>
+<h2 id="saving-and-match-history">Saving and Match History</h2>
+<p>When you are online, every analysis saves automatically to the team's shared Google Sheet, so there is no save button. Everyone using the site sees the same history.</p>
+<ul><li><strong>Save status:</strong> the header shows <strong>Saving...</strong>, then <strong>Save sent</strong>. <strong>Save sent</strong> means the request went out, not that the sheet confirmed it. If it matters, check that the row appears in Match History.</li><li><strong>Duplicates:</strong> the app sends a new save each time you analyze, so analyzing the same match twice may add a second row.</li><li><strong>Corrections:</strong> Battery ID and Event Name can't be edited in the app after a match is saved, so enter them carefully.</li></ul>
+<p>The Match History tab loads fresh each time you open it.</p>
+<ul><li><strong>Filter:</strong> use <strong>All Events</strong> and <strong>All Batteries</strong> at the top of the table.</li><li><strong>Sort:</strong> click any column heading, and click again to reverse the order.</li><li><strong>Spot problems:</strong> values past their warning limit appear in red. Scroll sideways to see every column.</li></ul>
+<p><strong>Battery Trending Across Matches</strong> sits below the table and needs at least 2 saved matches. It charts Min Voltage, Avg Voltage, Health Score or Resistance for each battery, match by match. Matches with no Battery ID are grouped as <strong>Unknown</strong>, which is why the Battery ID is worth entering.</p>
+<h2 id="using-it-without-wifi">Using it without WiFi</h2>
+<p>All the analysis runs in your browser, so you can diagnose a match in the pit with no internet. You only lose the features that need the cloud.</p>
+<p><strong>Set up before the event:</strong> on the <a href="https://github.com/ssolkhan/pt-match-diagnosis" target="_blank" rel="noopener">project's GitHub page</a>, choose <strong>Code</strong>, then <strong>Download ZIP</strong>, and unzip it on the laptop. Keep <code>index.html</code> and the <code>vendor</code> folder together with <code>guide.html</code>, because the charts and this guide load from there. To run it, open <code>index.html</code> in a browser.</p>
+<div class="table-wrap"><table><thead><tr><th>Feature</th><th>Online</th><th>Offline</th></tr></thead><tbody><tr><td>Drop in local log files</td><td>Yes</td><td>Yes</td></tr><tr><td>Summary, Timeline, Power, Errors, Insights</td><td>Yes</td><td>Yes</td></tr><tr><td>Browse Timber logs on GitHub</td><td>Yes</td><td>No</td></tr><tr><td>Auto-save to Google Sheet</td><td>Yes</td><td>No</td></tr><tr><td>Match History and battery trends</td><td>Yes</td><td>No</td></tr></tbody></table></div>
+<p>Matches analyzed offline are not saved or queued. To add one to the history, analyze the same log files again on the live site once you are back online.</p>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<p>This table covers problems using the app. The app shows only the message, so use this table for the fix. For problems with the robot itself, follow the cards in Insights.</p>
+<div class="table-wrap"><table><thead><tr><th>What you see</th><th>Likely reason</th><th>What to do</th></tr></thead><tbody><tr><td>Failed to load folders</td><td>Weak network, or a temporary GitHub limit</td><td>Check your connection, wait a few minutes, then click <strong>Refresh</strong></td></tr><tr><td>GitHub log browsing unavailable offline</td><td>The app could not reach its server, or you opened the local copy</td><td>Use the live site, or load files from your computer</td></tr><tr><td>Cloud match history unavailable offline</td><td>Same as above</td><td>Use the live site when you are back online</td></tr><tr><td>Now drop the matching file</td><td>Only one of the two files is loaded</td><td>Add the missing <code>.dslog</code> or <code>.dsevents</code> file</td></tr><tr><td>Error parsing log files</td><td>A file is damaged or not a valid log</td><td>Try the pair again, or pick a different match</td></tr><tr><td>Save failed</td><td>The save did not reach the sheet</td><td>Check your connection and analyze the match again</td></tr><tr><td>Health score of 5, or No Match Activity Detected</td><td>The robot was never enabled in auto or teleop, usually because it never connected to the field</td><td>In a real match, follow the Insights card: check the radio, Ethernet and roboRIO connections, and that the Driver Station team number matches the field assignment. Ignore it for a pit or idle session</td></tr><tr><td>No PDP/PDH data available in this log</td><td>The log has no power channel data</td><td>Use the other tabs for this match</td></tr><tr><td>No match type or number in the header</td><td>The log has no field connection (FMS) record, as with practice at home</td><td>Nothing needed: analysis still works</td></tr><tr><td>Motor names look wrong on Power</td><td>Channel names are set in the code for the current robot</td><td>Ask whoever maintains the app to update the channel list</td></tr></tbody></table></div>
+<h2 id="terms">Terms</h2>
+<p>These are the terms you will see most often in the app.</p>
+<div class="table-wrap"><table><thead><tr><th>Term</th><th>What it means</th></tr></thead><tbody><tr><td>Auto</td><td>The opening period of a match, when the robot runs on its own</td></tr><tr><td>Brownout</td><td>Battery voltage fell so low that the roboRIO cut motor output to protect itself. The app counts separate incidents and shows their total time. Older Match History rows may hold counts of 20 ms log samples instead, so they can look much higher</td></tr><tr><td>CAN</td><td>The wiring network that connects motor controllers and sensors to the roboRIO</td></tr><tr><td>CAN stale data</td><td>A device's data was out of date, which can mean an intermittent connection</td></tr><tr><td>CAN timeout</td><td>A device on the CAN network stopped responding</td></tr><tr><td>Driver Station</td><td>The laptop software that controls the robot and creates the log files</td></tr><tr><td>FMS</td><td>The Field Management System that runs official matches</td></tr><tr><td>Loop overrun</td><td>The robot code took longer than its normal 20 ms cycle</td></tr><tr><td>Packet loss</td><td>The share of messages lost between the Driver Station and the robot</td></tr><tr><td>PDH or PDP</td><td>The power board that feeds each motor and device through its own numbered channel</td></tr><tr><td>roboRIO</td><td>The robot's main controller, which runs the team's code</td></tr><tr><td>Teleop</td><td>The part of a match when drivers control the robot</td></tr><tr><td>Timber</td><td>The GitHub repo where the team's match logs are stored</td></tr><tr><td>Trip time</td><td>How long messages take to travel between the Driver Station and the robot</td></tr></tbody></table></div>
+</main>
+
+</body>
+</html>

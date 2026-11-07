@@ -96,6 +96,20 @@ body {
   gap: 16px;
 }
 
+.guide-link {
+  padding: 7px 16px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.guide-link:hover { border-color: var(--maroon); color: var(--maroon); }
+
 .match-badge {
   background: var(--maroon-bg);
   color: var(--maroon);
@@ -760,7 +774,8 @@ body {
 
 /* ========== RESPONSIVE ========== */
 @media (max-width: 768px) {
-  .header { padding: 12px 16px; }
+  .header { padding: 12px 16px; flex-wrap: wrap; }
+  .header-meta { flex-wrap: wrap; }
   .main-content { padding: 0 12px 24px; }
   .tabs { overflow-x: auto; width: 100%; }
   .summary-grid { grid-template-columns: repeat(2, 1fr); }
@@ -906,6 +921,7 @@ body {
     <div class="save-status" id="saveStatus"></div>
     <div style="font-size:12px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;" id="fileInfo"></div>
     <button onclick="resetDashboard()" id="loadNewBtn" style="display:none;padding:7px 16px;border:1px solid var(--border);background:var(--surface);border-radius:6px;font-family:'Outfit',sans-serif;font-size:12px;font-weight:500;cursor:pointer;color:var(--text-secondary);transition:all 0.15s;" onmouseover="this.style.borderColor='var(--maroon)';this.style.color='var(--maroon)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-secondary)'">Load Different Logs</button>
+    <a class="guide-link" href="guide.html" target="_blank" rel="noopener">📖 User Guide</a>
   </div>
 </div>
 
