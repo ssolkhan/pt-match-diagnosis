@@ -932,7 +932,8 @@ body {
     <h2>Drop Robot Logs Here</h2>
     <p>Drag & drop your <strong>.dslog</strong> and <strong>.dsevents</strong> files<br>or click to browse</p>
     <div class="hint">.dslog (telemetry) + .dsevents (events) — both v3 and v4 supported</div>
-    <div style="margin-top:18px;">
+    <div style="margin-top:18px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+      <button id="uploadBtn" type="button" style="padding:9px 16px;border:1px solid var(--maroon);background:var(--maroon);color:white;border-radius:8px;font-family:'Outfit',sans-serif;font-size:13px;font-weight:600;cursor:pointer;">Upload Log Files</button>
       <button id="githubBrowseBtn" type="button" style="padding:9px 16px;border:1px solid var(--blue-border);background:var(--blue-bg);color:var(--blue);border-radius:8px;font-family:'Outfit',sans-serif;font-size:13px;font-weight:600;cursor:pointer;" onclick="toggleGithubBrowser(event)">Browse Timber Logs on GitHub</button>
     </div>
     <div id="githubBrowser" style="display:none; margin-top:18px; text-align:left; max-width:560px; margin-left:auto; margin-right:auto; padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--surface-alt);">
