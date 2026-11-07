@@ -1141,6 +1141,18 @@ function computeBatteryResistanceMetrics(matchRecords) {
   return { worstResistance, worstResTime, highResCount };
 }
 
+// One incident = an unbroken run of brownout-flagged 20ms records
+function summarizeBrownouts(records) {
+  let incidents = 0;
+  let samples = 0;
+  records.forEach((r, i) => {
+    if (!r.brownout) return;
+    samples++;
+    if (i === 0 || !records[i - 1].brownout) incidents++;
+  });
+  return { incidents, seconds: samples * 0.02 };
+}
+
 function summarizeMatchMetrics(records, eventData) {
   const matchRecs = records.filter(r => r.mode === 'auto' || r.mode === 'teleop');
   const autoRecs = records.filter(r => r.mode === 'auto');
@@ -1153,7 +1165,7 @@ function summarizeMatchMetrics(records, eventData) {
   const maxLoss = validLoss.length ? Math.max(...validLoss.map(r => r.packetLoss)) : 0;
   const avgLoss = validLoss.length ? validLoss.reduce((s, r) => s + r.packetLoss, 0) / validLoss.length : 0;
   const maxCan = computeCanPeak(matchRecs);
-  const brownouts = records.filter(r => r.brownout).length;
+  const { incidents: brownouts, seconds: brownoutSeconds } = summarizeBrownouts(records);
   const critErrors = eventData.events.filter(e => e.severity === 'critical' && !e.noise).length;
   const warnings = eventData.events.filter(e => e.severity === 'warning' && !e.noise).length;
   const canTimeouts = eventData.events.filter(e => e.category === 'CAN' && e.title.includes('Timeout'));
@@ -1197,7 +1209,7 @@ function summarizeMatchMetrics(records, eventData) {
   return {
     matchRecs, autoRecs, teleopRecs, minV, avgV, maxV, maxLoss, avgLoss, maxCan,
     brownouts, critErrors, warnings, canTimeouts, canStale, avgCpu, maxCpu,
-    avgTrip, flickerRate, penalties, health, batteryMetrics
+    avgTrip, flickerRate, penalties, health, batteryMetrics, brownoutSeconds
   };
 }
 
@@ -1432,13 +1444,19 @@ function parseDSLog(buffer) {
   const startTime = new Date(LV_EPOCH.getTime() + seconds * 1000);
   
   const headerSize = 20;
-  const recordSize = version === 4 ? 47 : 35;
-  const dataLen = buffer.byteLength - headerSize;
-  const numRecords = Math.floor(dataLen / recordSize);
-  
+
+  // v3 records are a fixed 35 bytes. v4 records vary with the power board:
+  // 10 bytes of telemetry + 4 bytes of PD header + a payload set by the PD type.
+  const pdPayloadSize = pdpType => pdpType === 33 ? 33 : pdpType === 25 ? 25 : 0;
+
   const records = [];
-  for (let i = 0; i < numRecords; i++) {
-    const offset = headerSize + i * recordSize;
+  let nextOffset = headerSize;
+  for (let i = 0; ; i++) {
+    const offset = nextOffset;
+    if (offset + (version === 4 ? 14 : 35) > buffer.byteLength) break;
+    const recordSize = version === 4 ? 14 + pdPayloadSize(view.getUint8(offset + 13)) : 35;
+    if (offset + recordSize > buffer.byteLength) break;
+    nextOffset = offset + recordSize;
     const tripTime = view.getUint8(offset) / 2.0;
     const packetLossRaw = view.getUint8(offset + 1);
     const packetLoss = packetLossRaw > 25 ? null : 0.04 * packetLossRaw; // fraction 0.0-1.0; raw 0-25 = 0-100%, anything above is sentinel/invalid
@@ -1471,9 +1489,9 @@ function parseDSLog(buffer) {
     const pdpChannels = new Float32Array(24);
     const pdpBase = offset + 10;
     const pdpType = version === 4 ? view.getUint8(pdpBase + 3) : 0; // 25=CTRE PDP, 33=REV PDH, 0=none
-    if (pdpType > 0) {
+    if (pdPayloadSize(pdpType) > 0) {
       const pdpDataStart = version === 4 ? pdpBase + 4 : pdpBase;
-      const pdpBytes = new Uint8Array(buffer, pdpDataStart, version === 4 ? 33 : 25);
+      const pdpBytes = new Uint8Array(buffer, pdpDataStart, version === 4 ? pdPayloadSize(pdpType) : 25);
 
       // Little-endian 10-bit extraction
       function getLE10bit(bytes, bitOffset) {
@@ -1840,6 +1858,7 @@ function runDiagnostics(logData, eventData) {
 
   // Brownout detection
   const brownouts = records.filter(r => r.brownout);
+  const brownoutSummary = summarizeBrownouts(records);
 
   // Find time to first robot connection
   const firstConnected = records.find(r => r.mode !== 'disconnected' && r.voltage !== null);
@@ -1893,8 +1912,8 @@ function runDiagnostics(logData, eventData) {
   if (brownouts.length > 0) {
     diagnostics.fixNow.push({
       title: '⚡ Brownout Events Detected',
-      body: `The roboRIO flagged ${brownouts.length} brownout condition(s). During brownout, the roboRIO disables motor outputs to protect itself. Your robot went limp during these moments.`,
-      evidence: `Brownout records: ${brownouts.length} (${(brownouts.length * 0.02).toFixed(1)}s total)`,
+      body: `The roboRIO flagged ${brownoutSummary.incidents} brownout incident(s). During brownout, the roboRIO disables motor outputs to protect itself. Your robot went limp during these moments.`,
+      evidence: `Brownout incidents: ${brownoutSummary.incidents} (${brownoutSummary.seconds.toFixed(2)}s total)`,
       action: 'Swap battery. Check PDP/PDH breaker connections. Look for mechanisms that stall under load.'
     });
   }
@@ -2482,7 +2501,7 @@ function renderSummary(logData, eventData) {
   const metrics = summarizeMatchMetrics(records, eventData);
   const {
     matchRecs, autoRecs, teleopRecs, minV, avgV, maxV, maxLoss, avgLoss, maxCan,
-    brownouts, critErrors, warnings, canTimeouts, canStale, avgCpu, maxCpu,
+    brownouts, brownoutSeconds, critErrors, warnings, canTimeouts, canStale, avgCpu, maxCpu,
     penalties, health
   } = metrics;
 
@@ -2592,7 +2611,7 @@ function renderSummary(logData, eventData) {
     <div class="stat-card ${brownouts > 0 ? 'danger' : 'good'}">
       <div class="label">Brownouts</div>
       <div class="value">${brownouts}</div>
-      <div class="sub">${brownouts > 0 ? 'Motor outputs disabled!' : 'None detected'}</div>
+      <div class="sub">${brownouts > 0 ? `${brownoutSeconds.toFixed(2)}s total · Motor outputs disabled!` : 'None detected'}</div>
     </div>
     <div class="stat-card ${critErrors > 0 ? 'danger' : 'good'}">
       <div class="label">Critical Errors</div>
