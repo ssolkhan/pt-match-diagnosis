@@ -96,6 +96,20 @@ body {
   gap: 16px;
 }
 
+.guide-link {
+  padding: 7px 16px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.guide-link:hover { border-color: var(--maroon); color: var(--maroon); }
+
 .match-badge {
   background: var(--maroon-bg);
   color: var(--maroon);
@@ -124,6 +138,11 @@ body {
   font-size: 12px;
   font-weight: 500;
   display: none;
+}
+.power-profile-badge {
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 .save-status {
   font-size: 11px;
@@ -235,6 +254,49 @@ body {
 .drop-zone input[type="file"] {
   display: none;
 }
+
+.github-browse-notice {
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: default;
+}
+.github-browse-notice a { color: var(--blue); }
+
+.power-profile-picker {
+  margin: 18px auto 0;
+  max-width: 420px;
+  text-align: left;
+  cursor: default;
+}
+.power-profile-picker label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.power-profile-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+.power-profile-controls select, .power-profile-controls button {
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.power-profile-controls select { flex: 1; min-width: 0; }
+.power-profile-controls button { cursor: pointer; }
+.power-profile-status {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-top: 6px;
+}
+.power-profile-status:empty { display: none; }
 
 /* ========== MAIN LAYOUT ========== */
 .main-content {
@@ -760,7 +822,8 @@ body {
 
 /* ========== RESPONSIVE ========== */
 @media (max-width: 768px) {
-  .header { padding: 12px 16px; }
+  .header { padding: 12px 16px; flex-wrap: wrap; }
+  .header-meta { flex-wrap: wrap; }
   .main-content { padding: 0 12px 24px; }
   .tabs { overflow-x: auto; width: 100%; }
   .summary-grid { grid-template-columns: repeat(2, 1fr); }
@@ -903,9 +966,11 @@ body {
     <div class="event-badge" id="eventBadge"></div>
     <div class="match-badge" id="matchBadge"></div>
     <div class="battery-badge" id="batteryBadge"></div>
+    <div class="power-profile-badge" id="powerProfileBadge" hidden></div>
     <div class="save-status" id="saveStatus"></div>
     <div style="font-size:12px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;" id="fileInfo"></div>
     <button onclick="resetDashboard()" id="loadNewBtn" style="display:none;padding:7px 16px;border:1px solid var(--border);background:var(--surface);border-radius:6px;font-family:'Outfit',sans-serif;font-size:12px;font-weight:500;cursor:pointer;color:var(--text-secondary);transition:all 0.15s;" onmouseover="this.style.borderColor='var(--maroon)';this.style.color='var(--maroon)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-secondary)'">Load Different Logs</button>
+    <a class="guide-link" href="guide.html" target="_blank" rel="noopener">📖 User Guide</a>
   </div>
 </div>
 
@@ -916,8 +981,13 @@ body {
     <h2>Drop Robot Logs Here</h2>
     <p>Drag & drop your <strong>.dslog</strong> and <strong>.dsevents</strong> files<br>or click to browse</p>
     <div class="hint">.dslog (telemetry) + .dsevents (events) — both v3 and v4 supported</div>
-    <div style="margin-top:18px;">
-      <button id="githubBrowseBtn" type="button" style="padding:9px 16px;border:1px solid var(--blue-border);background:var(--blue-bg);color:var(--blue);border-radius:8px;font-family:'Outfit',sans-serif;font-size:13px;font-weight:600;cursor:pointer;" onclick="toggleGithubBrowser(event)">Browse Timber Logs on GitHub</button>
+    <div style="margin-top:18px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+      <button id="uploadBtn" type="button" style="padding:9px 16px;border:1px solid var(--maroon);background:var(--maroon);color:white;border-radius:8px;font-family:'Outfit',sans-serif;font-size:13px;font-weight:600;cursor:pointer;">Upload Log Files</button>
+      <button id="githubBrowseBtn" type="button" aria-describedby="githubBrowseNotice" disabled style="padding:9px 16px;border:1px solid var(--blue-border);background:var(--blue-bg);color:var(--blue);border-radius:8px;font-family:'Outfit',sans-serif;font-size:13px;font-weight:600;cursor:pointer;" onclick="toggleGithubBrowser(event)">Browse Timber Logs on GitHub</button>
+    </div>
+    <div class="github-browse-notice" id="githubBrowseNotice" role="status" hidden>
+      <span id="githubBrowseMessage"></span>
+      <a id="githubHostedLink" href="https://pt-match-dx.vercel.app/" target="_blank" rel="noopener" hidden>Open hosted dashboard</a>
     </div>
     <div id="githubBrowser" style="display:none; margin-top:18px; text-align:left; max-width:560px; margin-left:auto; margin-right:auto; padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--surface-alt);">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
@@ -944,6 +1014,15 @@ body {
       <button id="githubAnalyzeBtn" type="button" style="width:100%;margin-top:12px;padding:10px;background:var(--blue);color:white;border:none;border-radius:8px;font-family:'Outfit',sans-serif;font-size:14px;font-weight:600;cursor:pointer;" onclick="loadGithubMatch()" disabled>Load & Analyze GitHub Match</button>
     </div>
     <input type="file" id="fileInput" multiple accept=".dslog,.dsevents">
+    <div class="power-profile-picker" id="powerProfilePicker">
+      <label for="powerProfileSelect">Robot Power Profile (optional)</label>
+      <div class="power-profile-controls">
+        <select id="powerProfileSelect" aria-describedby="powerProfileStatus"></select>
+        <button id="importPowerProfileBtn" type="button">Import CSV</button>
+        <input type="file" id="powerProfileFile" accept=".csv,text/csv">
+      </div>
+      <div id="powerProfileStatus" class="power-profile-status" role="status"></div>
+    </div>
     <div id="metaInputs" style="display:none; margin-top:20px; text-align:left; max-width:360px; margin-left:auto; margin-right:auto;">
       <div style="margin-bottom:10px;">
         <label style="font-size:12px;font-weight:600;color:var(--text-secondary);display:block;margin-bottom:4px;">🔋 Battery ID <span style="font-weight:400;color:var(--text-muted);">(optional)</span></label>
@@ -1042,9 +1121,7 @@ body {
 // ========================================================================
 
 // ==================== PDH CHANNEL CONFIGURATION ====================
-// Maps PDH channels to CAN IDs and mechanism names.
-// Update when wiring changes.
-const PDH_CHANNELS = [
+const TIMBER_2026_CHANNELS = [
   { channel: 0,  canId: 4,  name: 'Swerve Drive RF',  group: 'Drivetrain' },
   { channel: 1,  canId: 3,  name: 'Swerve Turn RF',   group: 'Drivetrain' },
   { channel: 2,  canId: null, name: 'Ch 2',           group: 'Unused' },
@@ -1060,31 +1137,189 @@ const PDH_CHANNELS = [
   { channel: 12, canId: 40, name: 'Turret',            group: 'Shooter' },
   { channel: 13, canId: 42, name: 'Kraken 1',          group: 'Shooter' },
   { channel: 14, canId: 41, name: 'Kraken 2',          group: 'Shooter' },
-  { channel: 15, canId: 99, name: 'LimeLight',         group: 'Sensors' },
+  { channel: 15, canId: null, name: 'LimeLight',       group: 'Sensors' },
   { channel: 16, canId: 5,  name: 'Swerve Turn BL',   group: 'Drivetrain' },
   { channel: 17, canId: 6,  name: 'Swerve Drive BL',  group: 'Drivetrain' },
   { channel: 18, canId: 7,  name: 'Swerve Turn BR',   group: 'Drivetrain' },
   { channel: 19, canId: 8,  name: 'Swerve Drive BR',  group: 'Drivetrain' },
-  { channel: 20, canId: 99, name: 'CANcoders',         group: 'Sensors' },
-  { channel: 21, canId: 99, name: 'VRM',               group: 'Power' },
+  { channel: 20, canId: null, name: 'CANcoders',       group: 'Sensors' },
+  { channel: 21, canId: null, name: 'VRM',             group: 'Power' },
   { channel: 22, canId: null, name: 'Ch 22',           group: 'Unused' },
   { channel: 23, canId: null, name: 'Ch 23',           group: 'Unused' },
 ];
-const PDH_BY_CHANNEL = {};
-PDH_CHANNELS.forEach(ch => { PDH_BY_CHANNEL[ch.channel] = ch; });
-const PDH_BY_CAN_ID = {};
-PDH_CHANNELS.filter(ch => ch.canId !== null).forEach(ch => {
-  if (!PDH_BY_CAN_ID[ch.canId]) PDH_BY_CAN_ID[ch.canId] = [];
-  PDH_BY_CAN_ID[ch.canId].push(ch);
-});
+const powerProfiles = new Map([
+  ['', { name: 'No profile', channels: [] }],
+  ['timber-2026', { name: 'Timber 2026', channels: TIMBER_2026_CHANNELS }]
+]);
+const POWER_PROFILE_STORAGE_KEY = 'pt_robotPowerProfiles_v1';
+const PDH_BY_CHANNEL = new Map();
+const PDH_BY_CAN_ID = new Map();
 const PDH_GROUP_COLORS = {
   'Drivetrain': '#1E5FC4', 'Intake': '#059669', 'Climber': '#7C3AED',
   'Indexer': '#B8860B', 'Shooter': '#C41E1E', 'Sensors': '#6366F1',
   'Power': '#F97316', 'Unused': '#9CA3AF',
 };
-function pdhName(ch) { return PDH_BY_CHANNEL[ch]?.name || ('Ch ' + ch); }
-function pdhGroup(ch) { return PDH_BY_CHANNEL[ch]?.group || 'Unknown'; }
-function pdhColor(ch) { return PDH_GROUP_COLORS[pdhGroup(ch)] || '#6B6560'; }
+function pdhName(ch) { return PDH_BY_CHANNEL.get(ch)?.name || ('Ch ' + ch); }
+function pdhGroup(ch) { return PDH_BY_CHANNEL.get(ch)?.group || 'Ungrouped'; }
+function pdhGroupColor(group) {
+  return Object.hasOwn(PDH_GROUP_COLORS, group) ? PDH_GROUP_COLORS[group] : '#6B6560';
+}
+function pdhCanName(id) {
+  const channels = PDH_BY_CAN_ID.get(Number(id));
+  return channels?.length === 1 ? channels[0].name : null;
+}
+
+function applyPowerProfile(profileId) {
+  const profile = powerProfiles.get(profileId) || powerProfiles.get('');
+  PDH_BY_CHANNEL.clear();
+  PDH_BY_CAN_ID.clear();
+  for (const channel of profile.channels) {
+    PDH_BY_CHANNEL.set(channel.channel, channel);
+    if (channel.canId === null) continue;
+    if (!PDH_BY_CAN_ID.has(channel.canId)) PDH_BY_CAN_ID.set(channel.canId, []);
+    PDH_BY_CAN_ID.get(channel.canId).push(channel);
+  }
+  return profile;
+}
+
+function parsePowerProfile(csv) {
+  const source = csv.replace(/^\uFEFF/, '') + '\n';
+  // Match one CSV field and its separator, including commas and escaped quotes inside quoted fields.
+  const fieldPattern = /[ \t]*(?:"((?:[^"]|"")*)"|([^",\r\n]*))[ \t]*(,|\r\n|\n|\r)/y;
+  const rows = [];
+  let row = [];
+  while (fieldPattern.lastIndex < source.length) {
+    const field = fieldPattern.exec(source);
+    if (!field) throw new Error('Check the CSV for unmatched quotes or missing separators.');
+    const value = field[1] === undefined ? field[2] : field[1].replace(/""/g, '"');
+    row.push(value.trim().replace(/\s+/g, ' '));
+    if (field[3] !== ',') {
+      if (row.some(Boolean)) rows.push(row);
+      row = [];
+    }
+  }
+
+  const headers = (rows.shift() || []).map(value => value.toLowerCase());
+  const channelColumn = headers.indexOf('channel');
+  const canIdColumn = headers.indexOf('can_id');
+  const nameColumn = headers.indexOf('description');
+  const groupColumn = headers.indexOf('group');
+  if ([channelColumn, canIdColumn, nameColumn].includes(-1) || new Set(headers).size !== headers.length) {
+    throw new Error('Use unique CSV headers with channel, can_id, and description. The group column is optional.');
+  }
+  if (!rows.length) throw new Error('Add at least one channel to the CSV.');
+
+  const channelNumbers = new Set();
+  const groupNames = [...Object.keys(PDH_GROUP_COLORS), 'Ungrouped'];
+  return rows.map((values, index) => {
+    const rowLabel = `Channel entry ${index + 1}`;
+    if (values.length !== headers.length) throw new Error(`${rowLabel} has the wrong number of columns.`);
+
+    const channelText = values[channelColumn];
+    const channel = Number(channelText);
+    if (!/^\d+$/.test(channelText) || channel > 23) throw new Error(`${rowLabel} needs a channel from 0 to 23.`);
+    if (channelNumbers.has(channel)) throw new Error(`Channel ${channel} appears more than once.`);
+    channelNumbers.add(channel);
+
+    const canIdText = values[canIdColumn];
+    const canIdNumber = Number(canIdText);
+    if (canIdText !== '' && (!/^\d+$/.test(canIdText) || (canIdNumber > 63 && canIdNumber !== 99))) {
+      throw new Error(`Channel ${channel} needs a CAN ID from 0 to 63, a blank cell, or 99.`);
+    }
+    const canId = canIdText === '' || canIdNumber === 99 ? null : canIdNumber;
+    const name = values[nameColumn];
+    if (!name) throw new Error(`Channel ${channel} needs a description.`);
+    const groupText = values[groupColumn];
+    const group = groupNames.find(value => value.toLowerCase() === groupText?.toLowerCase()) || groupText || 'Ungrouped';
+    return { channel, canId, name, group };
+  });
+}
+
+function initPowerProfilePicker() {
+  const select = document.getElementById('powerProfileSelect');
+  const fileInput = document.getElementById('powerProfileFile');
+  const importButton = document.getElementById('importPowerProfileBtn');
+  const parseButton = document.getElementById('parseBtn');
+  const status = document.getElementById('powerProfileStatus');
+  let selectedId = '';
+  let restoreMessage = '';
+
+  try {
+    const saved = JSON.parse(localStorage.getItem(POWER_PROFILE_STORAGE_KEY) || '{}');
+    for (const entry of saved.profiles || []) {
+      try {
+        const { name, csv } = entry;
+        powerProfiles.set(`csv:${name}`, { name, csv, channels: parsePowerProfile(csv) });
+      } catch {
+        restoreMessage = 'A saved profile could not be loaded. Import its CSV again.';
+      }
+    }
+    if (powerProfiles.has(saved.selectedId)) selectedId = saved.selectedId;
+  } catch {
+    restoreMessage = 'Saved profiles are unavailable in this browser.';
+  }
+
+  function renderOptions() {
+    select.replaceChildren(...Array.from(powerProfiles, ([id, profile]) => new Option(profile.name, id)));
+    select.value = selectedId;
+  }
+
+  function showStatus(message = '', error = false) {
+    const channels = powerProfiles.get(selectedId).channels;
+    const assignedIds = channels.map(channel => channel.canId).filter(id => id !== null);
+    const ambiguousIds = [...new Set(assignedIds.filter((id, index) => assignedIds.indexOf(id) !== index))];
+    const ambiguity = ambiguousIds.length ? `Multiple channels share CAN ${ambiguousIds.length === 1 ? 'ID' : 'IDs'} ${ambiguousIds.join(', ')}. These events show the ID only.` : '';
+    status.textContent = [message, ambiguity].filter(Boolean).join(' ');
+    status.style.color = error ? 'var(--red)' : '';
+  }
+
+  function saveSelection() {
+    const profiles = Array.from(powerProfiles.values())
+      .filter(profile => profile.csv !== undefined)
+      .map(({ name, csv }) => ({ name, csv }));
+    try {
+      localStorage.setItem(POWER_PROFILE_STORAGE_KEY, JSON.stringify({ selectedId, profiles }));
+      showStatus();
+    } catch {
+      showStatus('This browser could not save profiles for next time. The selection still works on this page.', true);
+    }
+  }
+
+  select.addEventListener('change', () => {
+    selectedId = select.value;
+    saveSelection();
+  });
+  importButton.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files[0];
+    fileInput.value = '';
+    if (!file) return;
+    importButton.disabled = true;
+    parseButton.disabled = true;
+    try {
+      const csv = await file.text();
+      const channels = parsePowerProfile(csv);
+      const baseName = file.name.replace(/\.csv$/i, '').trim() || 'Imported profile';
+      const profilesByName = new Map(Array.from(powerProfiles.values(), profile => [profile.name, profile]));
+      let name = baseName;
+      for (let suffix = 2; profilesByName.has(name) && profilesByName.get(name).csv !== csv; suffix++) {
+        name = `${baseName} (${suffix})`;
+      }
+      selectedId = `csv:${name}`;
+      powerProfiles.set(selectedId, { name, csv, channels });
+      renderOptions();
+      saveSelection();
+    } catch (error) {
+      showStatus(`Could not import profile. ${error.message}`, true);
+    } finally {
+      importButton.disabled = false;
+      parseButton.disabled = false;
+    }
+  });
+
+  renderOptions();
+  showStatus(restoreMessage, Boolean(restoreMessage));
+}
 const POWER_SERIES_PALETTE = [
   '#2563EB', '#DC2626', '#059669', '#D97706', '#7C3AED', '#0891B2',
   '#DB2777', '#65A30D', '#EA580C', '#4F46E5', '#0F766E', '#B91C1C',
@@ -1141,6 +1376,18 @@ function computeBatteryResistanceMetrics(matchRecords) {
   return { worstResistance, worstResTime, highResCount };
 }
 
+// One incident = an unbroken run of brownout-flagged 20ms records
+function summarizeBrownouts(records) {
+  let incidents = 0;
+  let samples = 0;
+  records.forEach((r, i) => {
+    if (!r.brownout) return;
+    samples++;
+    if (i === 0 || !records[i - 1].brownout) incidents++;
+  });
+  return { incidents, seconds: samples * 0.02 };
+}
+
 function summarizeMatchMetrics(records, eventData) {
   const matchRecs = records.filter(r => r.mode === 'auto' || r.mode === 'teleop');
   const autoRecs = records.filter(r => r.mode === 'auto');
@@ -1153,7 +1400,7 @@ function summarizeMatchMetrics(records, eventData) {
   const maxLoss = validLoss.length ? Math.max(...validLoss.map(r => r.packetLoss)) : 0;
   const avgLoss = validLoss.length ? validLoss.reduce((s, r) => s + r.packetLoss, 0) / validLoss.length : 0;
   const maxCan = computeCanPeak(matchRecs);
-  const brownouts = records.filter(r => r.brownout).length;
+  const { incidents: brownouts, seconds: brownoutSeconds } = summarizeBrownouts(records);
   const critErrors = eventData.events.filter(e => e.severity === 'critical' && !e.noise).length;
   const warnings = eventData.events.filter(e => e.severity === 'warning' && !e.noise).length;
   const canTimeouts = eventData.events.filter(e => e.category === 'CAN' && e.title.includes('Timeout'));
@@ -1197,7 +1444,7 @@ function summarizeMatchMetrics(records, eventData) {
   return {
     matchRecs, autoRecs, teleopRecs, minV, avgV, maxV, maxLoss, avgLoss, maxCan,
     brownouts, critErrors, warnings, canTimeouts, canStale, avgCpu, maxCpu,
-    avgTrip, flickerRate, penalties, health, batteryMetrics
+    avgTrip, flickerRate, penalties, health, batteryMetrics, brownoutSeconds
   };
 }
 
@@ -1270,11 +1517,12 @@ function extractCanIdsFromText(text) {
   if (explicitIdListMatches.length > 0) {
     explicitIdListMatches.forEach(match => {
       match[1].split(',').forEach(part => {
-        const id = Number(part.trim());
+        const token = part.trim();
+        if (!token) return;
+        const id = Number(token);
         if (Number.isFinite(id) && id >= 0 && id <= 63) ids.add(id);
       });
     });
-    if (ids.size > 1 && ids.has(0)) ids.delete(0);
     return [...ids].sort((a, b) => a - b);
   }
   const patterns = [
@@ -1291,15 +1539,13 @@ function extractCanIdsFromText(text) {
       if (Number.isFinite(id) && id >= 0 && id <= 63) ids.add(id);
     }
   });
-  if (ids.size > 1 && ids.has(0)) ids.delete(0);
   return [...ids].sort((a, b) => a - b);
 }
 
 function formatCanDeviceList(ids) {
   if (!ids || ids.length === 0) return '';
   return ids.map(id => {
-    const mapped = PDH_BY_CAN_ID[id];
-    const mechName = mapped && mapped.length > 0 ? mapped[0].name : null;
+    const mechName = pdhCanName(id);
     return mechName ? `${id} (${mechName})` : String(id);
   }).join(', ');
 }
@@ -1319,8 +1565,7 @@ function extractCanMismatchInfo(text) {
   const snippet = (text || '').slice(snippetStart, snippetEnd).replace(/\s+/g, ' ').trim();
   const ids = extractCanIdsFromText(snippet);
   const canId = ids.length > 0 ? ids[0] : null;
-  const mapped = canId !== null ? PDH_BY_CAN_ID[canId] : null;
-  const mechName = mapped && mapped.length > 0 ? mapped[0].name : null;
+  const mechName = canId !== null ? pdhCanName(canId) : null;
   return { canId, mechName, snippet };
 }
 
@@ -1432,13 +1677,19 @@ function parseDSLog(buffer) {
   const startTime = new Date(LV_EPOCH.getTime() + seconds * 1000);
   
   const headerSize = 20;
-  const recordSize = version === 4 ? 47 : 35;
-  const dataLen = buffer.byteLength - headerSize;
-  const numRecords = Math.floor(dataLen / recordSize);
-  
+
+  // v3 records are a fixed 35 bytes. v4 records vary with the power board:
+  // 10 bytes of telemetry + 4 bytes of PD header + a payload set by the PD type.
+  const pdPayloadSize = pdpType => pdpType === 33 ? 33 : pdpType === 25 ? 25 : 0;
+
   const records = [];
-  for (let i = 0; i < numRecords; i++) {
-    const offset = headerSize + i * recordSize;
+  let nextOffset = headerSize;
+  for (let i = 0; ; i++) {
+    const offset = nextOffset;
+    if (offset + (version === 4 ? 14 : 35) > buffer.byteLength) break;
+    const recordSize = version === 4 ? 14 + pdPayloadSize(view.getUint8(offset + 13)) : 35;
+    if (offset + recordSize > buffer.byteLength) break;
+    nextOffset = offset + recordSize;
     const tripTime = view.getUint8(offset) / 2.0;
     const packetLossRaw = view.getUint8(offset + 1);
     const packetLoss = packetLossRaw > 25 ? null : 0.04 * packetLossRaw; // fraction 0.0-1.0; raw 0-25 = 0-100%, anything above is sentinel/invalid
@@ -1471,9 +1722,9 @@ function parseDSLog(buffer) {
     const pdpChannels = new Float32Array(24);
     const pdpBase = offset + 10;
     const pdpType = version === 4 ? view.getUint8(pdpBase + 3) : 0; // 25=CTRE PDP, 33=REV PDH, 0=none
-    if (pdpType > 0) {
+    if (pdPayloadSize(pdpType) > 0) {
       const pdpDataStart = version === 4 ? pdpBase + 4 : pdpBase;
-      const pdpBytes = new Uint8Array(buffer, pdpDataStart, version === 4 ? 33 : 25);
+      const pdpBytes = new Uint8Array(buffer, pdpDataStart, version === 4 ? pdPayloadSize(pdpType) : 25);
 
       // Little-endian 10-bit extraction
       function getLE10bit(bytes, bitOffset) {
@@ -1840,6 +2091,7 @@ function runDiagnostics(logData, eventData) {
 
   // Brownout detection
   const brownouts = records.filter(r => r.brownout);
+  const brownoutSummary = summarizeBrownouts(records);
 
   // Find time to first robot connection
   const firstConnected = records.find(r => r.mode !== 'disconnected' && r.voltage !== null);
@@ -1893,8 +2145,8 @@ function runDiagnostics(logData, eventData) {
   if (brownouts.length > 0) {
     diagnostics.fixNow.push({
       title: '⚡ Brownout Events Detected',
-      body: `The roboRIO flagged ${brownouts.length} brownout condition(s). During brownout, the roboRIO disables motor outputs to protect itself. Your robot went limp during these moments.`,
-      evidence: `Brownout records: ${brownouts.length} (${(brownouts.length * 0.02).toFixed(1)}s total)`,
+      body: `The roboRIO flagged ${brownoutSummary.incidents} brownout incident(s). During brownout, the roboRIO disables motor outputs to protect itself. Your robot went limp during these moments.`,
+      evidence: `Brownout incidents: ${brownoutSummary.incidents} (${brownoutSummary.seconds.toFixed(2)}s total)`,
       action: 'Swap battery. Check PDP/PDH breaker connections. Look for mechanisms that stall under load.'
     });
   }
@@ -2397,6 +2649,10 @@ function renderDashboard(logData, eventData, meta) {
   parsedLog = logData;
   parsedEvents = eventData;
   meta = meta || {};
+  const profile = applyPowerProfile(meta.powerProfileId);
+  const profileBadge = document.getElementById('powerProfileBadge');
+  profileBadge.textContent = `Power profile: ${profile.name}`;
+  profileBadge.hidden = false;
 
   document.getElementById('dropContainer').style.display = 'none';
   document.getElementById('dashboard').classList.add('active');
@@ -2482,7 +2738,7 @@ function renderSummary(logData, eventData) {
   const metrics = summarizeMatchMetrics(records, eventData);
   const {
     matchRecs, autoRecs, teleopRecs, minV, avgV, maxV, maxLoss, avgLoss, maxCan,
-    brownouts, critErrors, warnings, canTimeouts, canStale, avgCpu, maxCpu,
+    brownouts, brownoutSeconds, critErrors, warnings, canTimeouts, canStale, avgCpu, maxCpu,
     penalties, health
   } = metrics;
 
@@ -2592,7 +2848,7 @@ function renderSummary(logData, eventData) {
     <div class="stat-card ${brownouts > 0 ? 'danger' : 'good'}">
       <div class="label">Brownouts</div>
       <div class="value">${brownouts}</div>
-      <div class="sub">${brownouts > 0 ? 'Motor outputs disabled!' : 'None detected'}</div>
+      <div class="sub">${brownouts > 0 ? `${brownoutSeconds.toFixed(2)}s total · Motor outputs disabled!` : 'None detected'}</div>
     </div>
     <div class="stat-card ${critErrors > 0 ? 'danger' : 'good'}">
       <div class="label">Critical Errors</div>
@@ -2626,15 +2882,16 @@ function computeMotorAnomalies(matchRecs) {
     const avg = values.length ? values.reduce((s,v) => s+v, 0) / values.length : 0;
     stats.push({ ch, peak, avg, hasData: peak > 0.5 });
   }
-  const motorChannels = stats.filter(c => c.hasData && !['Sensors','Power','Unused'].includes(pdhGroup(c.ch)));
+  const motorChannels = stats.filter(c => c.hasData && !['Ungrouped', 'Sensors', 'Power', 'Unused'].includes(pdhGroup(c.ch)));
   if (motorChannels.length < 2) return;
-  const functionalGroups = {};
+  const functionalGroups = new Map();
   motorChannels.forEach(c => {
     const role = pdhName(c.ch).replace(/\s+(RF|LF|BL|BR|1|2|3|4)$/i, '').trim();
-    if (!functionalGroups[role]) functionalGroups[role] = [];
-    functionalGroups[role].push(c);
+    const key = `${pdhGroup(c.ch)}\n${role}`;
+    if (!functionalGroups.has(key)) functionalGroups.set(key, { role, channels: [] });
+    functionalGroups.get(key).channels.push(c);
   });
-  Object.entries(functionalGroups).forEach(([role, channels]) => {
+  functionalGroups.forEach(({ role, channels }) => {
     if (channels.length < 2) return;
     const groupAvg = channels.reduce((s,c) => s + c.avg, 0) / channels.length;
     const groupPeakAvg = channels.reduce((s,c) => s + c.peak, 0) / channels.length;
@@ -2667,7 +2924,7 @@ function renderMotorAnomalySummary() {
           <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:${bg};border:1px solid ${border};border-left:4px solid ${color};border-radius:var(--radius);">
             <span style="font-size:18px;">${icon}</span>
             <div style="flex:1;">
-              <div style="font-size:13px;font-weight:600;color:${color};">${a.title}</div>
+              <div style="font-size:13px;font-weight:600;color:${color};">${escapeHtml(a.title)}</div>
               <div style="font-size:11px;color:var(--text-secondary);margin-top:2px;font-family:'JetBrains Mono',monospace;">${a.detail}</div>
             </div>
             <button class="chart-toggle" style="font-size:10px;padding:3px 8px;border-color:${color};color:${color};white-space:nowrap;" onclick="isolatePowerChannel(${a.ch})">Isolate on Chart</button>
@@ -3097,10 +3354,9 @@ function renderCanSummaryBanner(events, targetId = 'canSummaryBanner', idPrefix 
   function formatCanIds(ids) {
     if (ids.length === 0) return '';
     return ids.map(id => {
-      const channels = PDH_BY_CAN_ID[Number(id)];
-      const mechName = channels && channels.length > 0 ? channels[0].name : null;
+      const mechName = pdhCanName(id);
       return mechName
-        ? `<strong style="font-family:'JetBrains Mono',monospace;">${id}</strong> <span style="color:var(--text-muted);">(${mechName})</span>`
+        ? `<strong style="font-family:'JetBrains Mono',monospace;">${id}</strong> <span style="color:var(--text-muted);">(${escapeHtml(mechName)})</span>`
         : `<strong style="font-family:'JetBrains Mono',monospace;">${id}</strong>`;
     }).join(', ');
   }
@@ -3151,10 +3407,9 @@ function renderCanSummaryBanner(events, targetId = 'canSummaryBanner', idPrefix 
       </div>
       <div id="${idPrefix}TimeoutDetail" style="display:none;padding:10px 18px 14px 40px;font-size:12px;color:var(--text-secondary);line-height:1.8;background:var(--red-bg);border:1px solid var(--red-border);border-top:none;border-radius:0 0 var(--radius) var(--radius);margin-top:-10px;">
         ${Object.entries(timeoutsByDevice).map(([id, info]) => {
-          const channels = PDH_BY_CAN_ID[Number(id)];
-          const mechName = channels && channels.length > 0 ? channels[0].name : null;
+          const mechName = pdhCanName(id);
           const reasons = [...info.reasons].join(', ') || 'CAN timeout';
-          return '<div style="margin-bottom:4px;"><strong style="font-family:\'JetBrains Mono\',monospace;">CAN ' + id + (mechName ? ' (' + mechName + ')' : '') + '</strong> — ' + info.count + '× timeout' + (info.count > 1 ? 's' : '') + ' · ' + reasons + '</div>';
+          return '<div style="margin-bottom:4px;"><strong style="font-family:\'JetBrains Mono\',monospace;">CAN ' + id + (mechName ? ' (' + escapeHtml(mechName) + ')' : '') + '</strong> — ' + info.count + '× timeout' + (info.count > 1 ? 's' : '') + ' · ' + escapeHtml(reasons) + '</div>';
         }).join('')}
       </div>`;
   }
@@ -3195,9 +3450,8 @@ function renderCanSummaryBanner(events, targetId = 'canSummaryBanner', idPrefix 
             });
           });
           return Object.entries(staleByDevice).map(([id, info]) => {
-            const channels = PDH_BY_CAN_ID[Number(id)];
-            const mechName = channels && channels.length > 0 ? channels[0].name : null;
-            return '<div style="margin-bottom:4px;"><strong style="font-family:\'JetBrains Mono\',monospace;">CAN ' + id + (mechName ? ' (' + mechName + ')' : '') + '</strong> — ' + info.count + '× stale event' + (info.count > 1 ? 's' : '') + '</div>';
+            const mechName = pdhCanName(id);
+            return '<div style="margin-bottom:4px;"><strong style="font-family:\'JetBrains Mono\',monospace;">CAN ' + id + (mechName ? ' (' + escapeHtml(mechName) + ')' : '') + '</strong> — ' + info.count + '× stale event' + (info.count > 1 ? 's' : '') + '</div>';
           }).join('');
         })()}
       </div>`;
@@ -3255,7 +3509,7 @@ function renderErrors(eventData) {
             <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:${bg};border:1px solid ${border};border-left:4px solid ${color};border-radius:var(--radius);">
               <span style="font-size:18px;">${icon}</span>
               <div style="flex:1;">
-                <div style="font-size:13px;font-weight:600;color:${color};">⚡ ${a.title}</div>
+                <div style="font-size:13px;font-weight:600;color:${color};">⚡ ${escapeHtml(a.title)}</div>
                 <div style="font-size:11px;color:var(--text-secondary);margin-top:2px;font-family:'JetBrains Mono',monospace;">${a.detail}</div>
               </div>
               <button class="chart-toggle" style="font-size:10px;padding:3px 8px;border-color:${color};color:${color};white-space:nowrap;" onclick="isolatePowerChannel(${a.ch})">Isolate on Chart</button>
@@ -3389,9 +3643,9 @@ function renderDiagnostics(logData, eventData) {
     html += `<div class="action-cards">${diag.fixNow.map(d => `
       <div class="action-card fix-now">
         <div class="card-priority">Fix Now ${d.time_s !== undefined ? `<button class="seek-btn" onclick="seekTimeline(${d.time_s})" style="float:right">📈 Show on Timeline</button>` : ''}</div>
-        <div class="card-title">${d.title}</div>
-        <div class="card-body">${d.body}</div>
-        ${d.action ? `<div class="card-body" style="margin-top:10px;font-weight:600;color:var(--red);">→ ${d.action}</div>` : ''}
+        <div class="card-title">${escapeHtml(d.title)}</div>
+        <div class="card-body">${escapeHtml(d.body)}</div>
+        ${d.action ? `<div class="card-body" style="margin-top:10px;font-weight:600;color:var(--red);">→ ${escapeHtml(d.action)}</div>` : ''}
         <div class="card-evidence">${escapeHtml(d.evidence || '')}</div>
       </div>
     `).join('')}</div>`;
@@ -3402,9 +3656,9 @@ function renderDiagnostics(logData, eventData) {
     html += `<div class="action-cards">${diag.investigate.map(d => `
       <div class="action-card investigate">
         <div class="card-priority">Investigate ${d.time_s !== undefined ? `<button class="seek-btn" onclick="seekTimeline(${d.time_s})" style="float:right">📈 Show on Timeline</button>` : ''}</div>
-        <div class="card-title">${d.title}</div>
-        <div class="card-body">${d.body}</div>
-        ${d.action ? `<div class="card-body" style="margin-top:10px;font-weight:600;color:var(--yellow);">→ ${d.action}</div>` : ''}
+        <div class="card-title">${escapeHtml(d.title)}</div>
+        <div class="card-body">${escapeHtml(d.body)}</div>
+        ${d.action ? `<div class="card-body" style="margin-top:10px;font-weight:600;color:var(--yellow);">→ ${escapeHtml(d.action)}</div>` : ''}
         <div class="card-evidence">${escapeHtml(d.evidence || '')}</div>
       </div>
     `).join('')}</div>`;
@@ -3415,8 +3669,8 @@ function renderDiagnostics(logData, eventData) {
     html += `<div class="action-cards">${diag.monitor.map(d => `
       <div class="action-card monitor">
         <div class="card-priority">OK</div>
-        <div class="card-title">${d.title}</div>
-        <div class="card-body">${d.body}</div>
+        <div class="card-title">${escapeHtml(d.title)}</div>
+        <div class="card-body">${escapeHtml(d.body)}</div>
         <div class="card-evidence">${escapeHtml(d.evidence || '')}</div>
       </div>
     `).join('')}</div>`;
@@ -3432,7 +3686,7 @@ function renderDiagnostics(logData, eventData) {
 
 function escapeHtml(str) {
   if (str === null || str === undefined) return '';
-  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // ==================== CROSS-HIGHLIGHT: SEEK TIMELINE FROM ERRORS ====================
@@ -3565,7 +3819,7 @@ let powerChartInstance = null;
 let powerActiveChannels = new Set();
 let powerSampled = [];
 
-function renderPower(logData) {
+function renderPower(logData, revealChannel) {
   const records = logData.records;
   const matchRecs = records.filter(r => r.mode === 'auto' || r.mode === 'teleop');
 
@@ -3604,7 +3858,7 @@ function renderPower(logData) {
             <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:${bg};border:1px solid ${border};border-left:4px solid ${color};border-radius:var(--radius);">
               <span style="font-size:16px;">${icon}</span>
               <div style="flex:1;">
-                <div style="font-size:12px;font-weight:600;color:${color};">${a.title}</div>
+                <div style="font-size:12px;font-weight:600;color:${color};">${escapeHtml(a.title)}</div>
                 <div style="font-size:10px;color:var(--text-secondary);font-family:'JetBrains Mono',monospace;">${a.detail}</div>
               </div>
               <button class="chart-toggle" style="font-size:10px;padding:3px 8px;border-color:${color};color:${color};" onclick="isolatePowerChannel(${a.ch})">Isolate on Chart</button>
@@ -3620,10 +3874,10 @@ function renderPower(logData) {
     <div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;">Top Current Consumers</div>
     <div class="top-consumers">
       ${top3.map((c, i) => `
-        <div class="consumer-card" style="border-left-color: ${pdhColor(c.ch)}">
-          <div class="ch-label">${pdhName(c.ch)} <span style="opacity:0.5;font-size:10px;">Ch ${c.ch} · CAN ${PDH_BY_CHANNEL[c.ch]?.canId ?? '—'}</span></div>
-          <div class="ch-value" style="color:${pdhColor(c.ch)}">${c.peak.toFixed(1)}A peak</div>
-          <div class="ch-sub">Avg: ${c.avg.toFixed(1)}A · Total: ${c.total.toFixed(0)} A·s · ${pdhGroup(c.ch)}</div>
+        <div class="consumer-card" style="border-left-color: ${pdhGroupColor(pdhGroup(c.ch))}">
+          <div class="ch-label">${escapeHtml(pdhName(c.ch))} <span style="opacity:0.5;font-size:10px;">Ch ${c.ch} · CAN ${PDH_BY_CHANNEL.get(c.ch)?.canId ?? '—'}</span></div>
+          <div class="ch-value" style="color:${pdhGroupColor(pdhGroup(c.ch))}">${c.peak.toFixed(1)}A peak</div>
+          <div class="ch-sub">Avg: ${c.avg.toFixed(1)}A · Total: ${c.total.toFixed(0)} A·s · ${escapeHtml(pdhGroup(c.ch))}</div>
         </div>
       `).join('')}
       ${top3.length === 0 ? '<div style="padding:20px;color:var(--text-muted);">No PDP/PDH data available in this log.</div>' : ''}
@@ -3634,16 +3888,11 @@ function renderPower(logData) {
 
   // Default: show channels with data (up to first 8 with data)
   powerActiveChannels = new Set(sorted.slice(0, 8).map(c => c.ch));
+  if (revealChannel !== undefined) powerActiveChannels.add(revealChannel);
+  const activeGroups = new Set(channelStats.filter(c => c.hasData).map(c => pdhGroup(c.ch)));
+  const groupButtons = new Set([...Object.keys(PDH_GROUP_COLORS), ...activeGroups]);
 
   function renderToggles() {
-    // Group channels by mechanism group for organized layout
-    const groups = {};
-    channelStats.forEach(c => {
-      const g = pdhGroup(c.ch);
-      if (!groups[g]) groups[g] = [];
-      groups[g].push(c);
-    });
-
     document.getElementById('powerChannelToggles').innerHTML = `
       <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:6px;">Channel Visibility</div>
       <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-bottom:8px;">
@@ -3651,19 +3900,20 @@ function renderPower(logData) {
         <button class="chart-toggle" id="pwrToggleNone" style="font-size:11px;padding:4px 10px;">None</button>
         <button class="chart-toggle" id="pwrToggleActive" style="font-size:11px;padding:4px 10px;">Active Only</button>
         <span style="width:4px;"></span>
-        ${Object.keys(PDH_GROUP_COLORS).filter(g => g !== 'Unused' && groups[g]?.some(c => c.hasData)).map(g =>
-          `<button class="chart-toggle pwr-group-toggle" data-group="${g}" style="font-size:11px;padding:4px 10px;border-color:${PDH_GROUP_COLORS[g]};color:${PDH_GROUP_COLORS[g]};">${g}</button>`
+        ${Array.from(groupButtons).filter(g => g !== 'Unused' && g !== 'Ungrouped' && activeGroups.has(g)).map(g =>
+          `<button class="chart-toggle pwr-group-toggle" data-group="${escapeHtml(g)}" style="font-size:11px;padding:4px 10px;border-color:${pdhGroupColor(g)};color:${pdhGroupColor(g)};">${escapeHtml(g)}</button>`
         ).join('')}
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
         ${channelStats.map(c => {
-          const color = pdhColor(c.ch);
+          const group = pdhGroup(c.ch);
+          const color = pdhGroupColor(group);
           const active = powerActiveChannels.has(c.ch);
           const label = pdhName(c.ch);
           return `
-          <label style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border:1px solid ${active ? color : 'var(--border)'};border-radius:5px;font-size:11px;font-family:'JetBrains Mono',monospace;cursor:pointer;background:${active ? color + '18' : 'var(--surface)'};opacity:${c.hasData ? 1 : 0.35};transition:all 0.15s;" title="CAN ${PDH_BY_CHANNEL[c.ch]?.canId ?? '—'} · ${pdhGroup(c.ch)}">
+          <label style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border:1px solid ${active ? color : 'var(--border)'};border-radius:5px;font-size:11px;font-family:'JetBrains Mono',monospace;cursor:pointer;background:${active ? color + '18' : 'var(--surface)'};opacity:${c.hasData ? 1 : 0.35};transition:all 0.15s;" title="CAN ${PDH_BY_CHANNEL.get(c.ch)?.canId ?? '—'} · ${escapeHtml(group)}">
             <input type="checkbox" data-ch="${c.ch}" ${active ? 'checked' : ''} style="accent-color:${color};width:12px;height:12px;cursor:pointer;">
-            <span style="color:${active ? color : 'var(--text-secondary)'};font-weight:${active ? '600' : '400'};">${label} <span style="opacity:0.5;font-weight:400;">(${c.ch})</span></span>
+            <span style="color:${active ? color : 'var(--text-secondary)'};font-weight:${active ? '600' : '400'};">${escapeHtml(label)} <span style="opacity:0.5;font-weight:400;">(${c.ch})</span></span>
           </label>`;
         }).join('')}
         <label style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border:1px solid ${powerActiveChannels.has(-1) ? '#1A1714' : 'var(--border)'};border-radius:5px;font-size:11px;font-family:'JetBrains Mono',monospace;cursor:pointer;background:${powerActiveChannels.has(-1) ? '#1A171418' : 'var(--surface)'};transition:all 0.15s;">
@@ -3806,6 +4056,7 @@ function renderPower(logData) {
     activeArr.forEach(ch => {
       const color = powerSeriesColor(ch);
       datasets.push({
+        channel: ch,
         label: pdhName(ch),
         data: powerSampled.map(r => ({ x: r.time_s, y: r.pdpChannels ? r.pdpChannels[ch] : 0 })),
         backgroundColor: color + '18',
@@ -3849,7 +4100,7 @@ function renderPower(logData) {
               <svg width="28" height="10" viewBox="0 0 28 10" aria-hidden="true">
                 <line x1="1" y1="5" x2="27" y2="5" stroke="${color}" stroke-width="2.5" stroke-linecap="round"></line>
               </svg>
-              <span style="color:${color};font-weight:600;">${pdhName(ch)}</span>
+              <span style="color:${color};font-weight:600;">${escapeHtml(pdhName(ch))}</span>
               <span style="color:var(--text-muted);">(${ch})</span>
             </div>`;
         }).join('')}
@@ -3912,7 +4163,7 @@ function renderPower(logData) {
     const peaks = [];
     if (motorAnomalies.length === 0) return peaks;
     motorAnomalies.forEach(a => {
-      const dsIdx = datasets.findIndex(ds => ds.label === pdhName(a.ch));
+      const dsIdx = datasets.findIndex(ds => ds.channel === a.ch);
       if (dsIdx < 0) return;
       let peakIdx = -1, peakVal = 0;
       datasets[dsIdx].data.forEach((pt, i) => {
@@ -4082,14 +4333,14 @@ function renderPower(logData) {
             const anomalyInfo = motorAnomalies.find(a => a.ch === c.ch);
             const barPct = sorted.length && sorted[0].peak > 0 ? (c.peak / sorted[0].peak * 100) : 0;
             const color = powerSeriesColor(c.ch);
-            const cfg = PDH_BY_CHANNEL[c.ch];
+            const cfg = PDH_BY_CHANNEL.get(c.ch);
             const rowBg = isAnomaly ? (anomalyInfo?.severity === 'danger' ? 'background:var(--red-bg);' : 'background:var(--yellow-bg);') : isTop ? 'background:var(--red-bg);' : '';
             return `
               <tr style="${rowBg}${!c.hasData ? 'opacity:0.4;' : ''}">
-                <td style="font-weight:600;color:${color};">${isAnomaly ? '⚠️ ' : ''}${pdhName(c.ch)}</td>
+                <td style="font-weight:600;color:${color};">${isAnomaly ? '⚠️ ' : ''}${escapeHtml(pdhName(c.ch))}</td>
                 <td style="color:var(--text-muted);">${c.ch}</td>
                 <td style="color:var(--text-muted);">${cfg?.canId ?? '—'}</td>
-                <td><span style="font-size:11px;padding:2px 6px;border-radius:4px;background:${color}18;color:${color};font-weight:500;">${pdhGroup(c.ch)}</span></td>
+                <td><span style="font-size:11px;padding:2px 6px;border-radius:4px;background:${color}18;color:${color};font-weight:500;">${escapeHtml(pdhGroup(c.ch))}</span></td>
                 <td style="${isTop ? 'color:var(--red);font-weight:700;' : ''}">${c.peak.toFixed(1)}</td>
                 <td>${c.avg.toFixed(1)}</td>
                 <td>${c.total.toFixed(1)}</td>
@@ -4118,15 +4369,9 @@ function isolatePowerChannel(ch) {
   document.querySelector('[data-tab="power"]').classList.add('active');
   document.getElementById('tab-power').classList.add('active');
 
-  if (powerNeedsRender && parsedLog) {
-    renderPower(parsedLog);
+  if (parsedLog && (powerNeedsRender || !powerActiveChannels.has(ch))) {
+    renderPower(parsedLog, ch);
     powerNeedsRender = false;
-  }
-
-  // Ensure the anomaly channel is visible
-  if (!powerActiveChannels.has(ch)) {
-    powerActiveChannels.add(ch);
-    if (parsedLog) renderPower(parsedLog);
   }
 
   if (!powerChartInstance) return;
@@ -4137,7 +4382,7 @@ function isolatePowerChannel(ch) {
   let peakIdx = -1, peakVal = 0, peakTime = 0, targetDsIdx = -1;
 
   powerChartInstance.data.datasets.forEach((ds, dsIdx) => {
-    const isTarget = ds.label === targetName;
+    const isTarget = ds.channel === ch;
     ds.borderWidth = isTarget ? 4 : 0.8;
     ds.backgroundColor = isTarget ? (ds.borderColor + '60') : (ds.borderColor + '10');
     if (isTarget) {
@@ -4360,14 +4605,20 @@ function applyConnectivityState() {
   const githubBtn = document.getElementById('githubBrowseBtn');
   const githubRefreshBtn = document.getElementById('githubRefreshBtn');
   const historyTabBtn = document.querySelector('.tab-btn[data-tab="history"]');
-  const githubOfflineMessage = 'GitHub log browsing is unavailable offline.';
+  const isLocalFile = window.location.protocol === 'file:';
+  const githubOfflineMessage = isLocalFile
+    ? 'GitHub browsing requires the hosted dashboard. You can upload local logs here.'
+    : 'GitHub browsing is unavailable. You can still upload local logs.';
   const historyOfflineMessage = 'Cloud match history is unavailable offline.';
 
   setButtonAvailability(githubBtn, appCapabilities.githubAvailable, githubOfflineMessage);
   setButtonAvailability(githubRefreshBtn, appCapabilities.githubAvailable, githubOfflineMessage);
+  document.getElementById('githubBrowseNotice').hidden = appCapabilities.githubAvailable;
+  document.getElementById('githubBrowseMessage').textContent = appCapabilities.githubAvailable ? '' : githubOfflineMessage;
+  document.getElementById('githubHostedLink').hidden = !isLocalFile;
 
   if (!appCapabilities.githubAvailable) {
-    renderGithubUnavailable('GitHub log browsing unavailable offline.');
+    renderGithubUnavailable(githubOfflineMessage);
   } else if (GITHUB_CONFIG) {
     const repoLabel = document.getElementById('githubRepoLabel');
     if (repoLabel) repoLabel.textContent = `${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo} · ${GITHUB_CONFIG.branch}:${GITHUB_CONFIG.basePath}`;
@@ -4383,33 +4634,28 @@ function applyConnectivityState() {
   }
 }
 
-// Fetch config on page load
-fetch('/api/config').then(r => {
-  if (!r.ok) throw new Error('Config unavailable');
-  return r.json();
-}).then(cfg => {
-  APPS_SCRIPT_URL = cfg.appsScriptUrl || null;
-  SHEET_ID = cfg.sheetId || null;
-  GITHUB_CONFIG = cfg.github || null;
-  appCapabilities = {
-    configAvailable: true,
-    githubAvailable: !!GITHUB_CONFIG,
-    historyAvailable: !!APPS_SCRIPT_URL,
-    saveAvailable: !!APPS_SCRIPT_URL
-  };
+async function loadAppConfig() {
+  if (window.location.protocol !== 'file:') {
+    try {
+      const response = await fetch('/api/config');
+      if (!response.ok) throw new Error('Config unavailable');
+      const config = await response.json();
+      APPS_SCRIPT_URL = config.appsScriptUrl || null;
+      SHEET_ID = config.sheetId || null;
+      GITHUB_CONFIG = config.github || null;
+      appCapabilities = {
+        configAvailable: true,
+        githubAvailable: !!GITHUB_CONFIG,
+        historyAvailable: !!APPS_SCRIPT_URL,
+        saveAvailable: !!APPS_SCRIPT_URL
+      };
+    } catch {
+      // Network-backed features stay disabled when config is unavailable.
+    }
+  }
   applyConnectivityState();
-}).catch(() => {
-  APPS_SCRIPT_URL = null;
-  SHEET_ID = null;
-  GITHUB_CONFIG = null;
-  appCapabilities = {
-    configAvailable: false,
-    githubAvailable: false,
-    historyAvailable: false,
-    saveAvailable: false
-  };
-  applyConnectivityState();
-});
+}
+loadAppConfig();
 
 function getGithubEventName() {
   if (!githubSelectedMatch || !githubSelectedMatch.folder) return '';
@@ -4598,8 +4844,10 @@ function handleFiles(files) {
     document.querySelector('.drop-zone .hint').style.display = 'none';
     document.getElementById('metaInputs').style.display = 'block';
     // Restore last event name
-    const lastEvent = localStorage.getItem('pt_lastEventName');
-    if (lastEvent) document.getElementById('eventNameInput').value = lastEvent;
+    try {
+      const lastEvent = localStorage.getItem('pt_lastEventName');
+      if (lastEvent) document.getElementById('eventNameInput').value = lastEvent;
+    } catch { /* Local analysis works without browser storage. */ }
   } else if (loadedFiles.dslog || loadedFiles.dsevents) {
     const have = loadedFiles.dslog ? '.dslog' : '.dsevents';
     const need = loadedFiles.dslog ? '.dsevents' : '.dslog';
@@ -4612,8 +4860,11 @@ function triggerParse() {
   const batteryId = document.getElementById('batteryIdInput').value.trim();
   const eventName = document.getElementById('eventNameInput').value.trim();
   // Save event name for next time
-  if (eventName) localStorage.setItem('pt_lastEventName', eventName);
-  currentMatchMeta = { batteryId, eventName };
+  try {
+    if (eventName) localStorage.setItem('pt_lastEventName', eventName);
+  } catch { /* Local analysis works without browser storage. */ }
+  const powerProfileId = document.getElementById('powerProfileSelect').value;
+  currentMatchMeta = { batteryId, eventName, powerProfileId };
 
   document.querySelector('.drop-zone h2').textContent = 'Parsing logs...';
   document.getElementById('metaInputs').style.display = 'none';
@@ -4951,10 +5202,10 @@ const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
 const githubFolderSelect = document.getElementById('githubFolderSelect');
 const githubMatchSelect = document.getElementById('githubMatchSelect');
+initPowerProfilePicker();
 
 dropZone.addEventListener('click', (e) => {
-  // Don't open file dialog if clicking on the meta inputs area
-  if (e.target.closest('#metaInputs') || e.target.closest('#githubBrowser') || e.target.closest('#githubBrowseBtn')) return;
+  if (e.target.closest('#metaInputs, #githubBrowser, #githubBrowseBtn, #githubBrowseNotice, #powerProfilePicker')) return;
   fileInput.click();
 });
 fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
@@ -5020,11 +5271,15 @@ function resetDashboard() {
   parsedLog = null;
   parsedEvents = null;
   timelineNeedsRender = false;
+  powerNeedsRender = false;
+  window._matchBounds = null;
+  document.querySelector('.tab-btn[data-tab="summary"]').click();
   document.getElementById('dropContainer').style.display = 'flex';
   document.getElementById('dashboard').classList.remove('active');
   document.getElementById('matchBadge').style.display = 'none';
   document.getElementById('batteryBadge').style.display = 'none';
   document.getElementById('eventBadge').style.display = 'none';
+  document.getElementById('powerProfileBadge').hidden = true;
   document.getElementById('saveStatus').style.display = 'none';
   document.getElementById('loadNewBtn').style.display = 'none';
   document.getElementById('metaInputs').style.display = 'none';
