@@ -4567,7 +4567,8 @@ let appCapabilities = {
 let currentMatchMeta = {};
 let githubFolders = [];
 let githubMatches = [];
-let githubSelectedMatch = null;
+let githubMatchListRequest = 0;
+let githubDownloadingMatch = false;
 let pendingLogBuffers = null;
 
 function setButtonAvailability(button, enabled, disabledLabel = '') {
@@ -4593,7 +4594,7 @@ function renderGithubUnavailable(message) {
   const repoLabel = document.getElementById('githubRepoLabel');
   githubFolders = [];
   githubMatches = [];
-  githubSelectedMatch = null;
+  githubMatchListRequest++;
   if (folderSelect) folderSelect.innerHTML = '<option value="">Offline</option>';
   if (matchSelect) matchSelect.innerHTML = '<option value="">GitHub unavailable offline</option>';
   if (repoLabel && !GITHUB_CONFIG) repoLabel.textContent = 'Offline local analysis mode';
@@ -4657,10 +4658,9 @@ async function loadAppConfig() {
 }
 loadAppConfig();
 
-function getGithubEventName() {
-  if (!githubSelectedMatch || !githubSelectedMatch.folder) return '';
-  const parts = githubSelectedMatch.folder.split('/').filter(Boolean);
-  return parts.length ? parts[parts.length - 1] : githubSelectedMatch.folder;
+function getSelectedGithubMatch() {
+  const value = document.getElementById('githubMatchSelect').value;
+  return value === '' ? null : githubMatches[Number(value)] || null;
 }
 
 function setGithubStatus(message, tone = 'muted') {
@@ -4674,18 +4674,13 @@ function updateGithubMatchMeta() {
   const meta = document.getElementById('githubMatchMeta');
   const analyzeBtn = document.getElementById('githubAnalyzeBtn');
   if (!meta || !analyzeBtn) return;
-  if (!githubSelectedMatch) {
-    meta.textContent = '';
-    analyzeBtn.disabled = true;
-    analyzeBtn.style.opacity = '0.6';
-    analyzeBtn.style.cursor = 'not-allowed';
-    return;
-  }
-  const totalKb = githubSelectedMatch.size ? `${(githubSelectedMatch.size / 1024).toFixed(1)} KB total` : '';
-  meta.textContent = `${githubSelectedMatch.dslogName} + ${githubSelectedMatch.dseventsName}${totalKb ? ' · ' + totalKb : ''}`;
-  analyzeBtn.disabled = false;
-  analyzeBtn.style.opacity = '1';
-  analyzeBtn.style.cursor = 'pointer';
+  const match = getSelectedGithubMatch();
+  const totalKb = match?.size ? ` · ${(match.size / 1024).toFixed(1)} KB total` : '';
+  meta.textContent = match ? `${match.dslogName} + ${match.dseventsName}${totalKb}` : '';
+  setButtonAvailability(analyzeBtn, Boolean(match) && appCapabilities.githubAvailable && !githubDownloadingMatch);
+  setButtonAvailability(document.getElementById('githubRefreshBtn'), appCapabilities.githubAvailable && !githubDownloadingMatch);
+  document.getElementById('githubFolderSelect').disabled = githubDownloadingMatch;
+  document.getElementById('githubMatchSelect').disabled = githubDownloadingMatch;
 }
 
 async function loadGithubFolders() {
@@ -4699,10 +4694,12 @@ async function loadGithubFolders() {
   setGithubStatus('Loading GitHub folders...', 'info');
   folderSelect.innerHTML = '<option value="">Loading...</option>';
   matchSelect.innerHTML = '<option value="">Choose a folder first</option>';
-  githubSelectedMatch = null;
+  githubMatches = [];
+  const request = ++githubMatchListRequest;
   updateGithubMatchMeta();
   try {
     const data = await fetch('/api/github-events').then(r => r.json());
+    if (request !== githubMatchListRequest) return;
     if (!data.success) throw new Error(data.error || 'Failed to load folders');
     githubFolders = data.folders || [];
     folderSelect.innerHTML = githubFolders.length
@@ -4710,6 +4707,7 @@ async function loadGithubFolders() {
       : '<option value="">No paired log folders found</option>';
     setGithubStatus(githubFolders.length ? `Loaded ${githubFolders.length} folder${githubFolders.length === 1 ? '' : 's'} from GitHub.` : 'No paired log folders found.', githubFolders.length ? 'success' : 'muted');
   } catch (error) {
+    if (request !== githubMatchListRequest) return;
     folderSelect.innerHTML = '<option value="">Failed to load folders</option>';
     setGithubStatus('GitHub log browsing is temporarily unavailable.', 'error');
   }
@@ -4722,25 +4720,30 @@ async function loadGithubMatchesForFolder(folder) {
     renderGithubUnavailable('GitHub log browsing unavailable offline.');
     return;
   }
+  const request = ++githubMatchListRequest;
   githubMatches = [];
-  githubSelectedMatch = null;
+  matchSelect.innerHTML = folder
+    ? '<option value="">Loading matches...</option>'
+    : '<option value="">Choose a folder first</option>';
   updateGithubMatchMeta();
   if (!folder) {
-    matchSelect.innerHTML = '<option value="">Choose a folder first</option>';
+    setGithubStatus('');
     return;
   }
-  matchSelect.innerHTML = '<option value="">Loading matches...</option>';
   setGithubStatus('Loading paired logs...', 'info');
   try {
     const url = '/api/github-matches?folder=' + encodeURIComponent(folder);
     const data = await fetch(url).then(r => r.json());
+    if (request !== githubMatchListRequest) return;
     if (!data.success) throw new Error(data.error || 'Failed to load matches');
     githubMatches = data.matches || [];
     matchSelect.innerHTML = githubMatches.length
       ? '<option value="">Choose a match...</option>' + githubMatches.map((m, idx) => `<option value="${idx}">${escapeHtml(m.label)}</option>`).join('')
       : '<option value="">No log pairs found</option>';
+    updateGithubMatchMeta();
     setGithubStatus(githubMatches.length ? `Loaded ${githubMatches.length} paired match log${githubMatches.length === 1 ? '' : 's'}.` : 'No complete .dslog/.dsevents pairs found in that folder.', githubMatches.length ? 'success' : 'muted');
   } catch (error) {
+    if (request !== githubMatchListRequest) return;
     matchSelect.innerHTML = '<option value="">Failed to load matches</option>';
     setGithubStatus('GitHub match listing is temporarily unavailable.', 'error');
   }
@@ -4757,7 +4760,10 @@ function toggleGithubBrowser(event) {
   }
   const opening = panel.style.display === 'none' || !panel.style.display;
   panel.style.display = opening ? 'block' : 'none';
-  if (opening && githubFolders.length === 0) loadGithubFolders();
+  if (opening) {
+    if (githubFolders.length === 0) loadGithubFolders();
+    else updateGithubMatchMeta();
+  }
 }
 
 async function analyzeLogBuffers(logBuf, evBuf, meta = {}, fileMeta = {}) {
@@ -4785,20 +4791,23 @@ async function analyzeLogBuffers(logBuf, evBuf, meta = {}, fileMeta = {}) {
 }
 
 async function loadGithubMatch() {
-  if (!githubSelectedMatch) return;
+  const match = getSelectedGithubMatch();
+  if (!match || githubDownloadingMatch) return;
   if (!appCapabilities.githubAvailable) {
     renderGithubUnavailable('GitHub log browsing unavailable offline.');
     return;
   }
+  githubDownloadingMatch = true;
+  updateGithubMatchMeta();
   setGithubStatus('Downloading GitHub log pair...', 'info');
   document.querySelector('.drop-zone h2').textContent = 'Loading GitHub logs...';
   try {
     const [logBuf, evBuf] = await Promise.all([
-      fetch('/api/github-file?path=' + encodeURIComponent(githubSelectedMatch.dslogPath)).then(r => {
+      fetch('/api/github-file?path=' + encodeURIComponent(match.dslogPath)).then(r => {
         if (!r.ok) throw new Error('Failed to download .dslog');
         return r.arrayBuffer();
       }),
-      fetch('/api/github-file?path=' + encodeURIComponent(githubSelectedMatch.dseventsPath)).then(r => {
+      fetch('/api/github-file?path=' + encodeURIComponent(match.dseventsPath)).then(r => {
         if (!r.ok) throw new Error('Failed to download .dsevents');
         return r.arrayBuffer();
       })
@@ -4806,12 +4815,12 @@ async function loadGithubMatch() {
     pendingLogBuffers = {
       logBuf,
       evBuf,
-      dslogName: githubSelectedMatch.dslogName,
-      dseventsName: githubSelectedMatch.dseventsName
+      dslogName: match.dslogName,
+      dseventsName: match.dseventsName
     };
     loadedFiles = {
-      dslog: { name: githubSelectedMatch.dslogName },
-      dsevents: { name: githubSelectedMatch.dseventsName }
+      dslog: { name: match.dslogName },
+      dsevents: { name: match.dseventsName }
     };
     document.querySelector('.drop-zone h2').textContent = '✓ GitHub Logs Ready';
     document.querySelector('.drop-zone p').innerHTML =
@@ -4819,12 +4828,15 @@ async function loadGithubMatch() {
     document.querySelector('.drop-zone .hint').style.display = 'none';
     document.getElementById('metaInputs').style.display = 'block';
     document.getElementById('batteryIdInput').focus();
-    document.getElementById('eventNameInput').value = getGithubEventName();
+    document.getElementById('eventNameInput').value = match.folder?.split('/').filter(Boolean).pop() || '';
     setGithubStatus('GitHub logs downloaded. Add battery ID if you have it, then analyze.', 'success');
   } catch (error) {
     pendingLogBuffers = null;
     setGithubStatus(error.message, 'error');
     document.querySelector('.drop-zone h2').textContent = 'Drop Robot Logs Here';
+  } finally {
+    githubDownloadingMatch = false;
+    updateGithubMatchMeta();
   }
 }
 
@@ -5213,10 +5225,7 @@ if (githubFolderSelect) {
   githubFolderSelect.addEventListener('change', () => loadGithubMatchesForFolder(githubFolderSelect.value));
 }
 if (githubMatchSelect) {
-  githubMatchSelect.addEventListener('change', () => {
-    githubSelectedMatch = githubMatchSelect.value === '' ? null : githubMatches[Number(githubMatchSelect.value)] || null;
-    updateGithubMatchMeta();
-  });
+  githubMatchSelect.addEventListener('change', updateGithubMatchMeta);
 }
 
 ['dragenter', 'dragover'].forEach(evtName => {
@@ -5266,7 +5275,6 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 function resetDashboard() {
   loadedFiles = {};
-  githubSelectedMatch = null;
   pendingLogBuffers = null;
   parsedLog = null;
   parsedEvents = null;
